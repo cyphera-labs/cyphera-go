@@ -1,7 +1,7 @@
 // Package engine defines the common interfaces implemented by all Cyphera protection engines.
 //
-// Cyphera ships multiple engines suited for different use cases:
-//   - FPE engines (ADF1, SoN1, FF1, FF3): reversible, format-preserving
+// Cyphera ships the following protection engines:
+//   - FPE engines (FF1, FF3-1): reversible, format-preserving, NIST SP 800-38G
 //   - AES-GCM: reversible, non-format-preserving general encryption
 //   - Mask: irreversible pattern-based redaction
 //   - Hash: irreversible deterministic tokenization

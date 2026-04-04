@@ -23,8 +23,8 @@ client, err := cyphera.New(
             Ref:      "customer-primary",
             Version:  1,
             Status:   keys.StatusActive,
-            Material: []byte("0123456789ABCDEF0123456789ABCDEF"),
-            Tweak:    []byte("customer-ssn"),
+            Material: []byte("0123456789ABCDEF"),
+            Tweak:    []byte("cust-ssn"),
         },
     )),
 )
@@ -70,6 +70,17 @@ import "github.com/cyphera-labs/cyphera-go/engine/ff1"
 
 cipher, _ := ff1.NewCipher(10, key, tweak)
 ct, _ := cipher.Encrypt("123456789", nil)
+
+// With alphabet pass-through (preserves dashes):
+ct, _ = cipher.EncryptDigitsOnly("123-45-6789", nil)
+// → "987-65-4321"
+```
+
+```go
+import "github.com/cyphera-labs/cyphera-go/engine/ff3"
+
+f, _ := ff3.Digits(key, tweak8) // tweak must be exactly 8 bytes
+ct, _ := f.Encrypt("123456789", nil)
 ```
 
 ---
@@ -82,10 +93,8 @@ config.go           Functional options — WithKeyProvider, WithDomain, WithEngi
 
 engine/
   engine.go         Engine, Encryptor, Protector interfaces + Params
-  adf1/             ADF1 — patent-clean FPE, recommended default
-  son1/             SoN1 — FPE for small/irregular domains
-  ff1/              FF1 — NIST SP 800-38G compliant
-  ff3/              FF3-1 — NIST SP 800-38G Rev 1 compliant
+  ff1/              FF1 — NIST SP 800-38G (full implementation)
+  ff3/              FF3-1 — NIST SP 800-38G Rev 1 (full implementation)
   aesgcm/           AES-256-GCM — general authenticated encryption
   mask/             Mask — irreversible pattern-based redaction
   hash/             Hash — irreversible deterministic tokenization
@@ -120,35 +129,31 @@ alphabet/
 
 | Engine | Type | Reversible | Description |
 |--------|------|-----------|-------------|
-| **ADF1** | FPE | Yes | Patent-clean, recommended default |
-| **SoN1** | FPE | Yes | Small/irregular domains |
-| **FF1** | FPE | Yes | NIST SP 800-38G compliant |
-| **FF3-1** | FPE | Yes | NIST SP 800-38G Rev 1 compliant |
+| **FF1** | FPE | Yes | NIST SP 800-38G — default engine |
+| **FF3-1** | FPE | Yes | NIST SP 800-38G Rev 1 |
 | **AES-GCM** | AES | Yes | General authenticated encryption |
 | **Mask** | Mask | No | Pattern-based redaction |
 | **Hash** | Hash | No | Deterministic tokenization |
 
-Engine selection hierarchy: policy → domain default → client default → **ADF1**.
+Engine selection hierarchy: policy → domain default → client default → **FF1**.
 
 ---
 
 ## Status
 
-**Early development — interfaces defined, implementations in progress.**
+**Early development — FF1 and FF3-1 fully implemented. SDK dispatch in progress.**
 
 - [x] Package structure and interfaces
 - [x] Domain: SSN, PAN, Phone, Email, TaxID, Custom
 - [x] Key providers: Memory, Env, File
 - [x] Audit: Event, Logger, JSON/Std loggers
 - [x] Policy enforcement
-- [x] AES-GCM engine (implemented)
-- [x] Mask engine (implemented)
-- [x] Hash engine (implemented)
-- [ ] ADF1 engine (stub — implementation in progress)
-- [ ] SoN1 engine (stub — implementation in progress)
-- [ ] FF1 engine (stub — implementation in progress)
-- [ ] FF3-1 engine (stub — implementation in progress)
-- [ ] SDK dispatch (stub — wires up when engines are ready)
+- [x] FF1 engine — NIST SP 800-38G (full implementation + alphabet pass-through)
+- [x] FF3-1 engine — NIST SP 800-38G Rev 1 (full implementation)
+- [x] AES-GCM engine
+- [x] Mask engine (last_4, first_6, full, email patterns)
+- [x] Hash engine (HMAC-SHA256, SHA-256)
+- [ ] SDK dispatch (wires engines to domains — in progress)
 
 ---
 

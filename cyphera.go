@@ -26,10 +26,8 @@
 //
 // # Engines
 //
-// Cyphera ships multiple protection engines:
-//   - ADF1: patent-clean FPE, recommended default
-//   - SoN1: FPE for small/irregular domains
-//   - FF1: NIST SP 800-38G compliant FPE
+// Cyphera ships the following protection engines:
+//   - FF1: NIST SP 800-38G compliant FPE (default)
 //   - FF3-1: NIST SP 800-38G Rev 1 compliant FPE
 //   - AES-GCM: general authenticated encryption
 //   - Mask: irreversible pattern-based redaction
@@ -131,7 +129,7 @@ type Client interface {
 	Hash(ctx context.Context, req Request) (Result, error)
 
 	// Protect applies the default protection for the domain as configured by policy.
-	// The engine is chosen by: policy → domain default → client default → ADF1.
+	// The engine is chosen by: policy → domain default → client default → FF1.
 	Protect(ctx context.Context, req Request) (Result, error)
 
 	// Unprotect reverses a Protect operation.
@@ -149,7 +147,7 @@ func New(opts ...Option) (Client, error) {
 	cfg := &config{
 		domainRegistry: domains.NewRegistry(),
 		engines:        make(map[string]engine.Engine),
-		defaultEngine:  "adf1",
+		defaultEngine:  "ff1",
 	}
 
 	for _, o := range opts {

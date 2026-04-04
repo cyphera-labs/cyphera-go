@@ -86,7 +86,7 @@ func WithDefaultKeyRef(ref string) Option {
 }
 
 // WithDefaultEngine sets the engine name used when no engine is specified by the domain
-// or policy. Defaults to "adf1".
+// or policy. Defaults to "ff1".
 func WithDefaultEngine(name string) Option {
 	return func(c *config) error {
 		c.defaultEngine = name
