@@ -1,6 +1,6 @@
 // Package adf1 implements the ADF1 format-preserving encryption algorithm.
 //
-// ADF1 is a Cyphera Labs original — patent-clean, built on established academic
+// ADF1 is a Cyphera original — patent-clean, built on established academic
 // research (Black-Rogaway 2002), and heading toward IETF standardization via
 // the CFRG Internet-Draft process.
 //

@@ -1,6 +1,6 @@
 // Package son1 implements the SoN1 (Swap-or-Not 1) format-preserving encryption algorithm.
 //
-// SoN1 is a Cyphera Labs original based on the Hoang-Morris-Rogaway (2012) Swap-or-Not
+// SoN1 is a Cyphera original based on the Hoang-Morris-Rogaway (2012) Swap-or-Not
 // shuffle construction. It is patent-clean and heading toward IETF standardization.
 //
 // SoN1 is best suited for small or irregular domains where Feistel networks are less
