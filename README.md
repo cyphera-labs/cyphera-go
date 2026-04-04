@@ -153,7 +153,7 @@ Engine selection hierarchy: policy → domain default → client default → **F
 - [x] AES-GCM engine
 - [x] Mask engine (last_4, first_6, full, email patterns)
 - [x] Hash engine (HMAC-SHA256, SHA-256)
-- [ ] SDK dispatch (wires engines to domains — in progress)
+- [x] SDK dispatch (wires FF1/mask/hash engines to domains)
 
 ---
 

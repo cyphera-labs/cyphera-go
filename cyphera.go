@@ -48,10 +48,20 @@ package cyphera
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/cyphera-labs/cyphera-go/domains"
+	domainEmail "github.com/cyphera-labs/cyphera-go/domains/email"
+	domainPAN "github.com/cyphera-labs/cyphera-go/domains/pan"
+	domainPhone "github.com/cyphera-labs/cyphera-go/domains/phone"
+	domainSSN "github.com/cyphera-labs/cyphera-go/domains/ssn"
+	domainTaxID "github.com/cyphera-labs/cyphera-go/domains/taxid"
 	"github.com/cyphera-labs/cyphera-go/engine"
+	engineAESGCM "github.com/cyphera-labs/cyphera-go/engine/aesgcm"
+	engineFF1 "github.com/cyphera-labs/cyphera-go/engine/ff1"
+	engineHash "github.com/cyphera-labs/cyphera-go/engine/hash"
+	engineMask "github.com/cyphera-labs/cyphera-go/engine/mask"
 	"github.com/cyphera-labs/cyphera-go/keys"
 	"github.com/cyphera-labs/cyphera-go/ops"
 )
@@ -95,7 +105,7 @@ type Result struct {
 	// Domain is the domain name used for this operation.
 	Domain string
 
-	// Engine is the name of the protection engine used, e.g. "adf1", "mask".
+	// Engine is the name of the protection engine used, e.g. "ff1", "mask".
 	Engine string
 
 	// Reversible reports whether the output can be reversed to recover the original value.
@@ -145,9 +155,14 @@ type Client interface {
 //	)
 func New(opts ...Option) (Client, error) {
 	cfg := &config{
-		domainRegistry: domains.NewRegistry(),
-		engines:        make(map[string]engine.Engine),
-		defaultEngine:  "ff1",
+		domainRegistry: domains.NewRegistry().
+			Register(domainSSN.New()).
+			Register(domainPAN.New()).
+			Register(domainPhone.New()).
+			Register(domainEmail.New()).
+			Register(domainTaxID.New()),
+		engines:       buildDefaultEngines(),
+		defaultEngine: "ff1",
 	}
 
 	for _, o := range opts {
@@ -161,6 +176,15 @@ func New(opts ...Option) (Client, error) {
 	}
 
 	return &client{cfg: cfg}, nil
+}
+
+func buildDefaultEngines() map[string]engine.Engine {
+	return map[string]engine.Engine{
+		"ff1":     engineFF1.New(),
+		"aes-gcm": engineAESGCM.New(),
+		"mask":    engineMask.New("", 0),
+		"hash":    engineHash.New(),
+	}
 }
 
 // client is the concrete implementation of Client.
@@ -225,7 +249,7 @@ func (c *client) Unprotect(ctx context.Context, req Request) (Result, error) {
 }
 
 // dispatch is the central dispatch point for all operations.
-// It enforces policy, resolves keys, and emits audit events.
+// It enforces policy, resolves keys, looks up the domain, and routes to the engine.
 func (c *client) dispatch(ctx context.Context, req Request, op ops.OperationType) (Result, error) {
 	// Apply defaults
 	if req.KeyRef == "" {
@@ -246,8 +270,8 @@ func (c *client) dispatch(ctx context.Context, req Request, op ops.OperationType
 
 	// Resolve key if needed
 	var keyRecord keys.Record
-	var keyErr error
 	if req.KeyRef != "" && c.cfg.keyProvider != nil {
+		var keyErr error
 		if req.KeyVersion > 0 {
 			keyRecord, keyErr = c.cfg.keyProvider.ResolveVersion(ctx, req.KeyRef, req.KeyVersion)
 		} else {
@@ -268,10 +292,145 @@ func (c *client) dispatch(ctx context.Context, req Request, op ops.OperationType
 		}
 	}
 
-	// Dispatch is not yet implemented — engines are stubs
-	err := errors.New("cyphera: operation not yet implemented (engine stubs)")
-	c.emitEvent(ctx, req, op, c.cfg.defaultEngine, keyRecord.Version, false, err.Error())
-	return Result{}, err
+	// Look up domain
+	dom := c.cfg.domainRegistry.Get(req.Domain)
+	if dom == nil {
+		err := fmt.Errorf("cyphera: unknown domain %q", req.Domain)
+		c.emitEvent(ctx, req, op, c.cfg.defaultEngine, keyRecord.Version, false, err.Error())
+		return Result{}, err
+	}
+
+	// Validate and normalize
+	if err := dom.Validate(req.Plaintext); err != nil {
+		c.emitEvent(ctx, req, op, c.cfg.defaultEngine, keyRecord.Version, false, err.Error())
+		return Result{}, err
+	}
+	normalized, err := dom.Normalize(req.Plaintext)
+	if err != nil {
+		c.emitEvent(ctx, req, op, c.cfg.defaultEngine, keyRecord.Version, false, err.Error())
+		return Result{}, err
+	}
+
+	// Route to the appropriate engine
+	switch op {
+	case ops.OperationMask:
+		return c.execMask(ctx, req, dom, normalized)
+	case ops.OperationHash:
+		return c.execHash(ctx, req, dom, normalized, keyRecord)
+	default:
+		return c.execFPE(ctx, req, op, dom, normalized, keyRecord)
+	}
+}
+
+// execFPE handles Encrypt, Decrypt, Protect, and Unprotect via the FF1 engine.
+func (c *client) execFPE(ctx context.Context, req Request, op ops.OperationType, dom domains.Domain, normalized string, keyRecord keys.Record) (Result, error) {
+	engName := c.cfg.defaultEngine
+
+	if len(keyRecord.Material) == 0 {
+		err := errors.New("cyphera: key material required for FPE operation")
+		c.emitEvent(ctx, req, op, engName, 0, false, err.Error())
+		return Result{}, err
+	}
+
+	chars, positions, template := dom.Extract(normalized)
+	if len(chars) == 0 {
+		// Nothing to encrypt — return normalized form as-is.
+		c.emitEvent(ctx, req, op, engName, keyRecord.Version, true, "")
+		return Result{
+			Output:     normalized,
+			KeyRef:     keyRecord.Ref,
+			KeyVersion: keyRecord.Version,
+			Domain:     req.Domain,
+			Engine:     engName,
+			Reversible: true,
+		}, nil
+	}
+
+	alpha := dom.Alphabet()
+	cipher, err := engineFF1.NewCipher(alpha.Radix(), keyRecord.Material, keyRecord.Tweak)
+	if err != nil {
+		c.emitEvent(ctx, req, op, engName, keyRecord.Version, false, err.Error())
+		return Result{}, fmt.Errorf("cyphera: failed to create FF1 cipher: %w", err)
+	}
+
+	var processed string
+	switch op {
+	case ops.OperationEncrypt, ops.OperationProtect:
+		processed, err = cipher.Encrypt(chars, nil)
+	case ops.OperationDecrypt, ops.OperationUnprotect:
+		processed, err = cipher.Decrypt(chars, nil)
+	default:
+		err = fmt.Errorf("cyphera: unsupported FPE operation %q", op)
+	}
+	if err != nil {
+		c.emitEvent(ctx, req, op, engName, keyRecord.Version, false, err.Error())
+		return Result{}, err
+	}
+
+	output := dom.Reconstruct(processed, positions, template)
+	c.emitEvent(ctx, req, op, engName, keyRecord.Version, true, "")
+	return Result{
+		Output:     output,
+		KeyRef:     keyRecord.Ref,
+		KeyVersion: keyRecord.Version,
+		Domain:     req.Domain,
+		Engine:     engName,
+		Reversible: true,
+	}, nil
+}
+
+// execMask handles Mask operations.
+// The masking pattern can be passed in req.Context["pattern"]; defaults to "last_4".
+func (c *client) execMask(ctx context.Context, req Request, dom domains.Domain, normalized string) (Result, error) {
+	const engName = "mask"
+
+	pattern := req.Context["pattern"]
+	if pattern == "" {
+		pattern = engineMask.PatternLast4
+	}
+
+	output, err := engineMask.Apply(normalized, pattern, 0)
+	if err != nil {
+		c.emitEvent(ctx, req, ops.OperationMask, engName, 0, false, err.Error())
+		return Result{}, err
+	}
+
+	c.emitEvent(ctx, req, ops.OperationMask, engName, 0, true, "")
+	return Result{
+		Output:     output,
+		Domain:     req.Domain,
+		Engine:     engName,
+		Reversible: false,
+	}, nil
+}
+
+// execHash handles Hash operations.
+// Uses HMAC-SHA256 if key material is available, otherwise SHA-256.
+func (c *client) execHash(ctx context.Context, req Request, dom domains.Domain, normalized string, keyRecord keys.Record) (Result, error) {
+	const engName = "hash"
+
+	// Hash the extracted characters only (the semantically meaningful part).
+	chars, _, _ := dom.Extract(normalized)
+	if chars == "" {
+		chars = normalized
+	}
+
+	var output string
+	if len(keyRecord.Material) > 0 {
+		output = engineHash.HMAC(chars, keyRecord.Material)
+	} else {
+		output = engineHash.SHA256Hash(chars)
+	}
+
+	c.emitEvent(ctx, req, ops.OperationHash, engName, keyRecord.Version, true, "")
+	return Result{
+		Output:     output,
+		KeyRef:     keyRecord.Ref,
+		KeyVersion: keyRecord.Version,
+		Domain:     req.Domain,
+		Engine:     engName,
+		Reversible: false,
+	}, nil
 }
 
 func (c *client) emitEvent(ctx context.Context, req Request, op ops.OperationType, eng string, keyVer int, success bool, errMsg string) {
