@@ -1,162 +1,77 @@
-# Cyphera
+# cyphera-go
 
-**Format-Preserving Encryption for Everyone.**
-A cross-compatible data protection library — easy enough for a startup, powerful enough for an enterprise.
+[![CI](https://github.com/cyphera-labs/cyphera-go/actions/workflows/ci.yml/badge.svg)](https://github.com/cyphera-labs/cyphera-go/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/cyphera-labs/cyphera-go.svg)](https://pkg.go.dev/github.com/cyphera-labs/cyphera-go)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
-A credit card number stays a credit card number. An SSN stays an SSN. A phone number stays a phone number. The data is protected, the keys are managed, the operations are audited — and developers never touch raw key material unless they explicitly choose to.
+Data protection SDK for Go — format-preserving encryption (FF1/FF3), data masking, and hashing.
 
----
+```
+go get github.com/cyphera-labs/cyphera-go
+```
 
-## Quick Start
+## Usage
 
 ```go
-import (
-    "context"
-    "github.com/cyphera-labs/cyphera-go"
-    "github.com/cyphera-labs/cyphera-go/keys/memory"
-    "github.com/cyphera-labs/cyphera-go/keys"
-)
+import "github.com/cyphera-labs/cyphera-go"
 
-client, err := cyphera.New(
-    cyphera.WithKeyProvider(memory.New(
-        keys.Record{
-            Ref:      "customer-primary",
-            Version:  1,
-            Status:   keys.StatusActive,
-            Material: []byte("0123456789ABCDEF"),
-            Tweak:    []byte("cust-ssn"),
-        },
-    )),
-)
+// Auto-discover: checks CYPHERA_POLICY_FILE env, ./cyphera.json, /etc/cyphera/cyphera.json
+c, err := cyphera.Load()
 
-ctx := context.Background()
+// Or load from a specific file
+c, err := cyphera.FromFile("./config/cyphera.json")
 
-result, err := client.Encrypt(ctx, cyphera.Request{
-    Domain:    "ssn",
-    KeyRef:    "customer-primary",
-    Plaintext: "123-45-6789",
-})
+// Protect
+encrypted, err := c.Protect("123-45-6789", "ssn")
+// → "T01i6J-xF-07pX" (tagged, dashes preserved)
 
-fmt.Println(result.Output)      // "987-65-4321" (format preserved)
-fmt.Println(result.KeyVersion)  // 1
+// Access (tag-based, no policy name needed)
+decrypted, err := c.Access(encrypted)
+// → "123-45-6789"
 ```
-
-### With audit logging
-
-```go
-import "github.com/cyphera-labs/cyphera-go/ops"
-
-client, _ := cyphera.New(
-    cyphera.WithKeyProvider(provider),
-    cyphera.WithLogger(ops.NewJSONLogger(os.Stdout)),
-)
-// Every operation emits a structured JSON audit event — no plaintext, no key material.
-```
-
-### Masking (irreversible)
-
-```go
-result, _ := client.Mask(ctx, cyphera.Request{
-    Domain:    "ssn_display_partial",
-    Plaintext: "123-45-6789",
-})
-fmt.Println(result.Output) // "***-**-6789"
-```
-
-### Direct primitive access (advanced)
-
-```go
-import "github.com/cyphera-labs/cyphera-go/engine/ff1"
-
-cipher, _ := ff1.NewCipher(10, key, tweak)
-ct, _ := cipher.Encrypt("123456789", nil)
-
-// With alphabet pass-through (preserves dashes):
-ct, _ = cipher.EncryptDigitsOnly("123-45-6789", nil)
-// → "987-65-4321"
-```
-
-```go
-import "github.com/cyphera-labs/cyphera-go/engine/ff3"
-
-f, _ := ff3.Digits(key, tweak8) // tweak must be exactly 8 bytes
-ct, _ := f.Encrypt("123456789", nil)
-```
-
----
-
-## Package Structure
-
-```
-cyphera.go          SDK entry point — Client interface, New(), Request, Result
-config.go           Functional options — WithKeyProvider, WithDomain, WithEngine, etc.
-
-engine/
-  engine.go         Engine, Encryptor, Protector interfaces + Params
-  ff1/              FF1 — NIST SP 800-38G (full implementation)
-  ff3/              FF3-1 — NIST SP 800-38G Rev 1 (full implementation)
-  aesgcm/           AES-256-GCM — general authenticated encryption
-  mask/             Mask — irreversible pattern-based redaction
-  hash/             Hash — irreversible deterministic tokenization
-
-domains/
-  domain.go         Domain interface + Registry
-  ssn/              Social Security Number (XXX-XX-XXXX)
-  pan/              Payment card number (PAN/credit card)
-  phone/            Phone number (international + domestic)
-  email/            Email address
-  taxid/            Tax ID / EIN (XX-XXXXXXX)
-  custom/           Custom domain builder
-
-keys/
-  provider.go       Provider interface, Record, Status, error types
-  memory/           In-memory provider (dev/testing)
-  env/              Environment variable provider (twelve-factor)
-  file/             File-based provider (secrets manager integration)
-
-ops/
-  audit.go          Event struct, Logger interface, OperationType
-  logger.go         NewNoopLogger, NewStdLogger, NewJSONLogger
-  policy.go         Policy struct — domain restrictions, deprecated key rules
-
-alphabet/
-  alphabet.go       Alphabet type — character sets for FPE engines
-```
-
----
 
 ## Engines
 
-| Engine | Type | Reversible | Description |
-|--------|------|-----------|-------------|
-| **FF1** | FPE | Yes | NIST SP 800-38G — default engine |
-| **FF3-1** | FPE | Yes | NIST SP 800-38G Rev 1 |
-| **AES-GCM** | AES | Yes | General authenticated encryption |
-| **Mask** | Mask | No | Pattern-based redaction |
-| **Hash** | Hash | No | Deterministic tokenization |
+| Engine | Reversible | Description |
+|--------|-----------|-------------|
+| `ff1`  | Yes | NIST SP 800-38G FF1 format-preserving encryption |
+| `ff3`  | Yes | NIST SP 800-38G Rev 1 FF3-1 format-preserving encryption |
+| `mask` | No  | Simple pattern masking (last4, first1, full, etc.) |
+| `hash` | No  | SHA-256/384/512, HMAC when key provided |
 
-Engine selection hierarchy: policy → domain default → client default → **FF1**.
+## Policy File (cyphera.json)
 
----
+```json
+{
+  "policies": {
+    "ssn": { "engine": "ff1", "key_ref": "my-key", "tag": "T01" },
+    "cc": { "engine": "ff1", "key_ref": "my-key", "tag": "T02" },
+    "ssn_mask": { "engine": "mask", "pattern": "last4", "tag_enabled": false }
+  },
+  "keys": {
+    "my-key": { "material": "2B7E151628AED2A6ABF7158809CF4F3C" }
+  }
+}
+```
+
+## Cross-Language Compatible
+
+All six SDKs produce identical output for the same inputs:
+
+```
+Input:       123-45-6789
+Java:        T01i6J-xF-07pX
+Rust:        T01i6J-xF-07pX
+Node:        T01i6J-xF-07pX
+Python:      T01i6J-xF-07pX
+Go:          T01i6J-xF-07pX
+.NET:        T01i6J-xF-07pX
+```
 
 ## Status
 
-**Early development — FF1 and FF3-1 fully implemented. SDK dispatch in progress.**
-
-- [x] Package structure and interfaces
-- [x] Domain: SSN, PAN, Phone, Email, TaxID, Custom
-- [x] Key providers: Memory, Env, File
-- [x] Audit: Event, Logger, JSON/Std loggers
-- [x] Policy enforcement
-- [x] FF1 engine — NIST SP 800-38G (full implementation + alphabet pass-through)
-- [x] FF3-1 engine — NIST SP 800-38G Rev 1 (full implementation)
-- [x] AES-GCM engine
-- [x] Mask engine (last_4, first_6, full, email patterns)
-- [x] Hash engine (HMAC-SHA256, SHA-256)
-- [x] SDK dispatch (wires FF1/mask/hash engines to domains)
-
----
+Alpha. API is unstable. Cross-language test vectors validated against Java, Rust, Node, Python, and .NET implementations.
 
 ## License
 
-Apache 2.0
+Apache 2.0 — Copyright 2026 Horizon Digital Engineering LLC
