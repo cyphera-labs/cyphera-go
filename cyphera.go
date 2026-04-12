@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/sha512"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -17,6 +18,63 @@ import (
 	"github.com/cyphera-labs/cyphera-go/engine/ff1"
 	"github.com/cyphera-labs/cyphera-go/engine/ff3"
 )
+
+var cloudSources = map[string]bool{
+	"aws-kms": true, "gcp-kms": true, "azure-kv": true, "vault": true,
+}
+
+func resolveKeySource(name, source string, config map[string]string) ([]byte, error) {
+	switch source {
+	case "env":
+		varName, ok := config["var"]
+		if !ok || varName == "" {
+			return nil, fmt.Errorf("key '%s': source 'env' requires 'var' field", name)
+		}
+		val := os.Getenv(varName)
+		if val == "" {
+			return nil, fmt.Errorf("key '%s': environment variable '%s' is not set", name, varName)
+		}
+		encoding := config["encoding"]
+		if encoding == "" {
+			encoding = "hex"
+		}
+		if encoding == "base64" {
+			return base64.StdEncoding.DecodeString(val)
+		}
+		return hex.DecodeString(val)
+
+	case "file":
+		path, ok := config["path"]
+		if !ok || path == "" {
+			return nil, fmt.Errorf("key '%s': source 'file' requires 'path' field", name)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("key '%s': failed to read file '%s': %w", name, path, err)
+		}
+		raw := strings.TrimSpace(string(data))
+		encoding := config["encoding"]
+		if encoding == "" {
+			if strings.HasSuffix(path, ".b64") || strings.HasSuffix(path, ".base64") {
+				encoding = "base64"
+			} else {
+				encoding = "hex"
+			}
+		}
+		if encoding == "base64" {
+			return base64.StdEncoding.DecodeString(raw)
+		}
+		return hex.DecodeString(raw)
+	}
+
+	if cloudSources[source] {
+		return nil, fmt.Errorf(
+			"key '%s' requires source '%s' but cyphera-keychain is not available.\n"+
+				"See: github.com/cyphera-labs/keychain", name, source)
+	}
+
+	return nil, fmt.Errorf("key '%s': unknown source '%s'. Valid: env, file, aws-kms, gcp-kms, azure-kv, vault", name, source)
+}
 
 var defaultAlphabets = map[string]string{
 	"digits":       "0123456789",
@@ -111,6 +169,14 @@ func FromConfig(config Config) (*Cyphera, error) {
 				return nil, fmt.Errorf("bad key hex for %s: %w", name, err)
 			}
 			c.keys[name] = key
+		} else if source, ok := kv["source"]; ok {
+			key, err := resolveKeySource(name, source, kv)
+			if err != nil {
+				return nil, err
+			}
+			c.keys[name] = key
+		} else {
+			return nil, fmt.Errorf("key '%s' must have either 'material' or 'source'", name)
 		}
 	}
 	for name, pol := range config.Policies {
