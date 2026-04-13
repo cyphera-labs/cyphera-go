@@ -220,7 +220,7 @@ func (c *Cyphera) Access(protectedValue string, policyName ...string) (string, e
 		if !ok {
 			return "", fmt.Errorf("unknown policy: %s", policyName[0])
 		}
-		return c.accessFPE(protectedValue, pol)
+		return c.accessFPE(protectedValue, pol, true)
 	}
 	tags := make([]string, 0, len(c.tagIndex))
 	for t := range c.tagIndex {
@@ -230,7 +230,7 @@ func (c *Cyphera) Access(protectedValue string, policyName ...string) (string, e
 	for _, tag := range tags {
 		if strings.HasPrefix(protectedValue, tag) {
 			pol := c.policies[c.tagIndex[tag]]
-			return c.accessFPE(protectedValue, pol)
+			return c.accessFPE(protectedValue, pol, false)
 		}
 	}
 	return "", fmt.Errorf("no matching tag found")
@@ -271,7 +271,7 @@ func (c *Cyphera) protectFPE(value string, pol Policy, isFF3 bool) (string, erro
 	return result, nil
 }
 
-func (c *Cyphera) accessFPE(protectedValue string, pol Policy) (string, error) {
+func (c *Cyphera) accessFPE(protectedValue string, pol Policy, explicitPolicy bool) (string, error) {
 	if pol.Engine != "ff1" && pol.Engine != "ff3" {
 		return "", fmt.Errorf("cannot reverse '%s'", pol.Engine)
 	}
@@ -281,7 +281,7 @@ func (c *Cyphera) accessFPE(protectedValue string, pol Policy) (string, error) {
 	}
 	alphabet := resolveAlphabet(pol.Alphabet)
 	withoutTag := protectedValue
-	if pol.isTagEnabled() && pol.Tag != "" {
+	if !explicitPolicy && pol.isTagEnabled() && pol.Tag != "" {
 		withoutTag = protectedValue[len(pol.Tag):]
 	}
 	enc, pos, ch := extractPassthroughs(withoutTag, alphabet)
