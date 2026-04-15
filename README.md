@@ -1,6 +1,7 @@
 # cyphera-go
 
 [![CI](https://github.com/cyphera-labs/cyphera-go/actions/workflows/ci.yml/badge.svg)](https://github.com/cyphera-labs/cyphera-go/actions/workflows/ci.yml)
+[![Security](https://github.com/cyphera-labs/cyphera-go/actions/workflows/codeql.yml/badge.svg)](https://github.com/cyphera-labs/cyphera-go/actions/workflows/codeql.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/cyphera-labs/cyphera-go.svg)](https://pkg.go.dev/github.com/cyphera-labs/cyphera-go)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
