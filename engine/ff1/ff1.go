@@ -32,6 +32,8 @@ func New(key, tweak []byte, alphabet string) (*Cipher, error) {
 		return nil, errors.New("key must be 16, 24, or 32 bytes")
 	}
 
+	// NIST SP 800-38G requires AES-ECB as the PRF for FF1/FF3 Feistel rounds.
+	// This is single-block encryption used as a building block, not ECB mode applied to user data.
 	aesCipher, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AES cipher: %w", err)

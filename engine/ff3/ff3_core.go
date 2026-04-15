@@ -237,6 +237,8 @@ func createAESCipher(key []byte) (cipher.Block, error) {
 	for i := 0; i < len(key); i++ {
 		reversedKey[i] = key[len(key)-1-i]
 	}
+	// NIST SP 800-38G requires AES-ECB as the PRF for FF1/FF3 Feistel rounds.
+	// This is single-block encryption used as a building block, not ECB mode applied to user data.
 	return aes.NewCipher(reversedKey)
 }
 
