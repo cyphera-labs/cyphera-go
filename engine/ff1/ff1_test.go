@@ -3,6 +3,9 @@ package ff1
 import (
 	"encoding/hex"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func h(s string) []byte {
@@ -21,23 +24,15 @@ func nist(t *testing.T, keyHex, tweakHex, alphabet, pt, ct string) {
 		tweak = h(tweakHex)
 	}
 	c, err := New(key, tweak, alphabet)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	require.NoError(t, err, "New")
+
 	encrypted, err := c.Encrypt(pt)
-	if err != nil {
-		t.Fatalf("Encrypt: %v", err)
-	}
-	if encrypted != ct {
-		t.Errorf("Encrypt(%s) = %s, want %s", pt, encrypted, ct)
-	}
+	require.NoError(t, err, "Encrypt")
+	assert.Equal(t, ct, encrypted, "Encrypt(%s)", pt)
+
 	decrypted, err := c.Decrypt(ct)
-	if err != nil {
-		t.Fatalf("Decrypt: %v", err)
-	}
-	if decrypted != pt {
-		t.Errorf("Decrypt(%s) = %s, want %s", ct, decrypted, pt)
-	}
+	require.NoError(t, err, "Decrypt")
+	assert.Equal(t, pt, decrypted, "Decrypt(%s)", ct)
 }
 
 // NIST SP 800-38G FF1 test vectors — AES-128
