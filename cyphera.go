@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash"
 	"os"
@@ -18,6 +19,17 @@ import (
 	"github.com/cyphera-labs/cyphera-go/engine/ff1"
 	"github.com/cyphera-labs/cyphera-go/engine/ff3"
 )
+
+// ErrExplicitAccessOnHeaderedConfiguration is returned by Access when the
+// caller supplies a configuration name whose header_enabled is true. The
+// two-argument form treats the input as raw headerless ciphertext, so it
+// is only valid for header_enabled=false configurations. For headered
+// configurations the header itself identifies the configuration — use the
+// single-argument Access(value) instead.
+//
+// Wrap with errors.Is to detect; the formatted error also includes the
+// configuration name for debuggability.
+var ErrExplicitAccessOnHeaderedConfiguration = errors.New("two-arg access on header_enabled=true configuration")
 
 var cloudSources = map[string]bool{
 	"aws-kms": true, "gcp-kms": true, "azure-kv": true, "vault": true,
@@ -213,14 +225,32 @@ func (c *Cyphera) Protect(value, configurationName string) (string, error) {
 	}
 }
 
-// Access decrypts a protected value. Without configurationName, uses header-based lookup.
+// Access decrypts a protected value.
+//
+// Without a configuration name, the protected value's leading header (DPH)
+// is matched against the known configurations and the corresponding
+// configuration is used to decrypt the remainder.
+//
+// With a configuration name, the input is treated as raw headerless
+// ciphertext for the named configuration. This form is only valid when the
+// configuration has header_enabled=false; for headered configurations the
+// header identifies the configuration, so use the single-argument form
+// instead. Calling the two-argument form on a header_enabled=true
+// configuration returns ErrExplicitAccessOnHeaderedConfiguration.
 func (c *Cyphera) Access(protectedValue string, configurationName ...string) (string, error) {
 	if len(configurationName) > 0 && configurationName[0] != "" {
-		cfg, ok := c.configurations[configurationName[0]]
+		name := configurationName[0]
+		cfg, ok := c.configurations[name]
 		if !ok {
-			return "", fmt.Errorf("unknown configuration: %s", configurationName[0])
+			return "", fmt.Errorf("unknown configuration: %s", name)
 		}
-		return c.accessFPE(protectedValue, cfg, true)
+		if cfg.isHeaderEnabled() {
+			return "", fmt.Errorf(
+				"configuration '%s' has header_enabled=true; use Access(value) — the header identifies the configuration. The two-arg form is for header_enabled=false configurations only: %w",
+				name, ErrExplicitAccessOnHeaderedConfiguration,
+			)
+		}
+		return c.accessFPE(protectedValue, cfg)
 	}
 	headers := make([]string, 0, len(c.headerIndex))
 	for h := range c.headerIndex {
@@ -230,7 +260,8 @@ func (c *Cyphera) Access(protectedValue string, configurationName ...string) (st
 	for _, header := range headers {
 		if strings.HasPrefix(protectedValue, header) {
 			cfg := c.configurations[c.headerIndex[header]]
-			return c.accessFPE(protectedValue, cfg, false)
+			// Strip the header here — accessFPE always assumes headerless input.
+			return c.accessFPE(protectedValue[len(header):], cfg)
 		}
 	}
 	return "", fmt.Errorf("no matching header found")
@@ -271,7 +302,12 @@ func (c *Cyphera) protectFPE(value string, cfg Configuration, isFF3 bool) (strin
 	return result, nil
 }
 
-func (c *Cyphera) accessFPE(protectedValue string, cfg Configuration, explicitConfiguration bool) (string, error) {
+// accessFPE decrypts a headerless ciphertext using the given configuration.
+// Callers are responsible for stripping any DPH before calling — the
+// header-based path in Access does the strip, and the explicit two-arg
+// path in Access is only reachable for header_enabled=false configurations
+// (which have no header to strip).
+func (c *Cyphera) accessFPE(protectedValue string, cfg Configuration) (string, error) {
 	if cfg.Engine != "ff1" && cfg.Engine != "ff3" {
 		return "", fmt.Errorf("cannot reverse '%s'", cfg.Engine)
 	}
@@ -280,11 +316,7 @@ func (c *Cyphera) accessFPE(protectedValue string, cfg Configuration, explicitCo
 		return "", fmt.Errorf("unknown key: %s", cfg.KeyRef)
 	}
 	alphabet := resolveAlphabet(cfg.Alphabet)
-	withoutHeader := protectedValue
-	if !explicitConfiguration && cfg.isHeaderEnabled() && cfg.Header != "" {
-		withoutHeader = protectedValue[len(cfg.Header):]
-	}
-	enc, pos, ch := extractPassthroughs(withoutHeader, alphabet)
+	enc, pos, ch := extractPassthroughs(protectedValue, alphabet)
 	var decrypted string
 	var err error
 	if cfg.Engine == "ff3" {

@@ -1,8 +1,10 @@
 package cyphera
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -172,6 +174,48 @@ func TestKeySourceEnvMatchesInline(t *testing.T) {
 	p2, _ := cEnv.Protect("123456789", "ssn")
 	if p1 != p2 {
 		t.Errorf("env source should match inline: %s != %s", p1, p2)
+	}
+}
+
+func TestAccessOnHeaderedConfigurationErrors(t *testing.T) {
+	c, err := FromConfig(testConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	protected, err := c.Protect("123-45-6789", "ssn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ssn has header_enabled=true (default). Two-arg Access must error
+	// cleanly instead of silently decrypting garbage.
+	_, err = c.Access(protected, "ssn")
+	if err == nil {
+		t.Fatal("expected error on two-arg Access with headered configuration, got nil")
+	}
+	if !errors.Is(err, ErrExplicitAccessOnHeaderedConfiguration) {
+		t.Errorf("expected ErrExplicitAccessOnHeaderedConfiguration sentinel, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "ssn") {
+		t.Errorf("error message should include configuration name 'ssn', got: %v", err)
+	}
+}
+
+func TestAccessTwoArgOnUnheaderedConfigurationWorks(t *testing.T) {
+	c, err := FromConfig(testConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ssn_digits has header_enabled=false → two-arg Access is the right call.
+	protected, err := c.Protect("123456789", "ssn_digits")
+	if err != nil {
+		t.Fatal(err)
+	}
+	accessed, err := c.Access(protected, "ssn_digits")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if accessed != "123456789" {
+		t.Errorf("roundtrip failed: got %s", accessed)
 	}
 }
 
