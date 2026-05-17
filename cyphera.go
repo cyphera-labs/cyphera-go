@@ -1,5 +1,5 @@
 // Package cyphera provides a data protection SDK with format-preserving encryption,
-// data masking, and hashing. Policy-driven, cross-language compatible.
+// data masking, and hashing. Configuration-driven, cross-language compatible.
 package cyphera
 
 import (
@@ -94,41 +94,41 @@ func resolveAlphabet(name string) string {
 	return name
 }
 
-// Policy represents a named protection policy.
-type Policy struct {
-	Engine     string `json:"engine"`
-	Alphabet   string `json:"alphabet,omitempty"`
-	KeyRef     string `json:"key_ref,omitempty"`
-	Tag        string `json:"tag,omitempty"`
-	TagEnabled *bool  `json:"tag_enabled,omitempty"`
-	TagLength  int    `json:"tag_length,omitempty"`
-	Pattern    string `json:"pattern,omitempty"`
-	Algorithm  string `json:"algorithm,omitempty"`
+// Configuration represents a named protection configuration.
+type Configuration struct {
+	Engine        string `json:"engine"`
+	Alphabet      string `json:"alphabet,omitempty"`
+	KeyRef        string `json:"key_ref,omitempty"`
+	Header        string `json:"header,omitempty"`
+	HeaderEnabled *bool  `json:"header_enabled,omitempty"`
+	HeaderLength  int    `json:"header_length,omitempty"`
+	Pattern       string `json:"pattern,omitempty"`
+	Algorithm     string `json:"algorithm,omitempty"`
 }
 
-func (p Policy) isTagEnabled() bool {
-	if p.TagEnabled == nil {
+func (c Configuration) isHeaderEnabled() bool {
+	if c.HeaderEnabled == nil {
 		return true
 	}
-	return *p.TagEnabled
+	return *c.HeaderEnabled
 }
 
-// Config is the JSON policy file structure.
+// Config is the JSON configuration file structure.
 type Config struct {
-	Policies map[string]Policy            `json:"policies"`
-	Keys     map[string]map[string]string `json:"keys"`
+	Configurations map[string]Configuration     `json:"configurations"`
+	Keys           map[string]map[string]string `json:"keys"`
 }
 
 // Cyphera is the main SDK client.
 type Cyphera struct {
-	policies map[string]Policy
-	tagIndex map[string]string
-	keys     map[string][]byte
+	configurations map[string]Configuration
+	headerIndex    map[string]string
+	keys           map[string][]byte
 }
 
 // Load auto-discovers cyphera.json.
 func Load() (*Cyphera, error) {
-	if p := os.Getenv("CYPHERA_POLICY_FILE"); p != "" {
+	if p := os.Getenv("CYPHERA_CONFIG_FILE"); p != "" {
 		if _, err := os.Stat(p); err == nil {
 			return FromFile(p)
 		}
@@ -139,10 +139,10 @@ func Load() (*Cyphera, error) {
 	if _, err := os.Stat("/etc/cyphera/cyphera.json"); err == nil {
 		return FromFile("/etc/cyphera/cyphera.json")
 	}
-	return nil, fmt.Errorf("no policy file found")
+	return nil, fmt.Errorf("no configuration file found")
 }
 
-// FromFile loads from a JSON policy file.
+// FromFile loads from a JSON configuration file.
 func FromFile(path string) (*Cyphera, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -158,9 +158,9 @@ func FromFile(path string) (*Cyphera, error) {
 // FromConfig creates a client from a Config struct.
 func FromConfig(config Config) (*Cyphera, error) {
 	c := &Cyphera{
-		policies: config.Policies,
-		tagIndex: make(map[string]string),
-		keys:     make(map[string][]byte),
+		configurations: config.Configurations,
+		headerIndex:    make(map[string]string),
+		keys:           make(map[string][]byte),
 	}
 	for name, kv := range config.Keys {
 		if m, ok := kv["material"]; ok {
@@ -179,69 +179,69 @@ func FromConfig(config Config) (*Cyphera, error) {
 			return nil, fmt.Errorf("key '%s' must have either 'material' or 'source'", name)
 		}
 	}
-	for name, pol := range config.Policies {
-		if pol.isTagEnabled() {
-			if pol.Tag == "" {
-				return nil, fmt.Errorf("policy '%s' has tag_enabled=true but no tag", name)
+	for name, cfg := range config.Configurations {
+		if cfg.isHeaderEnabled() {
+			if cfg.Header == "" {
+				return nil, fmt.Errorf("configuration '%s' has header_enabled=true but no header", name)
 			}
-			if existing, ok := c.tagIndex[pol.Tag]; ok {
-				return nil, fmt.Errorf("tag collision: '%s' used by '%s' and '%s'", pol.Tag, existing, name)
+			if existing, ok := c.headerIndex[cfg.Header]; ok {
+				return nil, fmt.Errorf("header collision: '%s' used by '%s' and '%s'", cfg.Header, existing, name)
 			}
-			c.tagIndex[pol.Tag] = name
+			c.headerIndex[cfg.Header] = name
 		}
 	}
 	return c, nil
 }
 
-// Protect encrypts a value using the named policy.
-func (c *Cyphera) Protect(value, policyName string) (string, error) {
-	pol, ok := c.policies[policyName]
+// Protect encrypts a value using the named configuration.
+func (c *Cyphera) Protect(value, configurationName string) (string, error) {
+	cfg, ok := c.configurations[configurationName]
 	if !ok {
-		return "", fmt.Errorf("unknown policy: %s", policyName)
+		return "", fmt.Errorf("unknown configuration: %s", configurationName)
 	}
-	switch pol.Engine {
+	switch cfg.Engine {
 	case "ff1":
-		return c.protectFPE(value, pol, false)
+		return c.protectFPE(value, cfg, false)
 	case "ff3":
-		return c.protectFPE(value, pol, true)
+		return c.protectFPE(value, cfg, true)
 	case "mask":
-		return c.protectMask(value, pol)
+		return c.protectMask(value, cfg)
 	case "hash":
-		return c.protectHash(value, pol)
+		return c.protectHash(value, cfg)
 	default:
-		return "", fmt.Errorf("unknown engine: %s", pol.Engine)
+		return "", fmt.Errorf("unknown engine: %s", cfg.Engine)
 	}
 }
 
-// Access decrypts a protected value. Without policyName, uses tag-based lookup.
-func (c *Cyphera) Access(protectedValue string, policyName ...string) (string, error) {
-	if len(policyName) > 0 && policyName[0] != "" {
-		pol, ok := c.policies[policyName[0]]
+// Access decrypts a protected value. Without configurationName, uses header-based lookup.
+func (c *Cyphera) Access(protectedValue string, configurationName ...string) (string, error) {
+	if len(configurationName) > 0 && configurationName[0] != "" {
+		cfg, ok := c.configurations[configurationName[0]]
 		if !ok {
-			return "", fmt.Errorf("unknown policy: %s", policyName[0])
+			return "", fmt.Errorf("unknown configuration: %s", configurationName[0])
 		}
-		return c.accessFPE(protectedValue, pol, true)
+		return c.accessFPE(protectedValue, cfg, true)
 	}
-	tags := make([]string, 0, len(c.tagIndex))
-	for t := range c.tagIndex {
-		tags = append(tags, t)
+	headers := make([]string, 0, len(c.headerIndex))
+	for h := range c.headerIndex {
+		headers = append(headers, h)
 	}
-	sort.Slice(tags, func(i, j int) bool { return len(tags[i]) > len(tags[j]) })
-	for _, tag := range tags {
-		if strings.HasPrefix(protectedValue, tag) {
-			pol := c.policies[c.tagIndex[tag]]
-			return c.accessFPE(protectedValue, pol, false)
+	sort.Slice(headers, func(i, j int) bool { return len(headers[i]) > len(headers[j]) })
+	for _, header := range headers {
+		if strings.HasPrefix(protectedValue, header) {
+			cfg := c.configurations[c.headerIndex[header]]
+			return c.accessFPE(protectedValue, cfg, false)
 		}
 	}
-	return "", fmt.Errorf("no matching tag found")
+	return "", fmt.Errorf("no matching header found")
 }
 
-func (c *Cyphera) protectFPE(value string, pol Policy, isFF3 bool) (string, error) {
-	key := c.keys[pol.KeyRef]
+func (c *Cyphera) protectFPE(value string, cfg Configuration, isFF3 bool) (string, error) {
+	key := c.keys[cfg.KeyRef]
 	if key == nil {
-		return "", fmt.Errorf("unknown key: %s", pol.KeyRef)
+		return "", fmt.Errorf("unknown key: %s", cfg.KeyRef)
 	}
-	alphabet := resolveAlphabet(pol.Alphabet)
+	alphabet := resolveAlphabet(cfg.Alphabet)
 	enc, pos, ch := extractPassthroughs(value, alphabet)
 	if enc == "" {
 		return "", fmt.Errorf("no encryptable characters")
@@ -265,29 +265,29 @@ func (c *Cyphera) protectFPE(value string, pol Policy, isFF3 bool) (string, erro
 		return "", err
 	}
 	result := reinsertPassthroughs(encrypted, pos, ch)
-	if pol.isTagEnabled() && pol.Tag != "" {
-		return pol.Tag + result, nil
+	if cfg.isHeaderEnabled() && cfg.Header != "" {
+		return cfg.Header + result, nil
 	}
 	return result, nil
 }
 
-func (c *Cyphera) accessFPE(protectedValue string, pol Policy, explicitPolicy bool) (string, error) {
-	if pol.Engine != "ff1" && pol.Engine != "ff3" {
-		return "", fmt.Errorf("cannot reverse '%s'", pol.Engine)
+func (c *Cyphera) accessFPE(protectedValue string, cfg Configuration, explicitConfiguration bool) (string, error) {
+	if cfg.Engine != "ff1" && cfg.Engine != "ff3" {
+		return "", fmt.Errorf("cannot reverse '%s'", cfg.Engine)
 	}
-	key := c.keys[pol.KeyRef]
+	key := c.keys[cfg.KeyRef]
 	if key == nil {
-		return "", fmt.Errorf("unknown key: %s", pol.KeyRef)
+		return "", fmt.Errorf("unknown key: %s", cfg.KeyRef)
 	}
-	alphabet := resolveAlphabet(pol.Alphabet)
-	withoutTag := protectedValue
-	if !explicitPolicy && pol.isTagEnabled() && pol.Tag != "" {
-		withoutTag = protectedValue[len(pol.Tag):]
+	alphabet := resolveAlphabet(cfg.Alphabet)
+	withoutHeader := protectedValue
+	if !explicitConfiguration && cfg.isHeaderEnabled() && cfg.Header != "" {
+		withoutHeader = protectedValue[len(cfg.Header):]
 	}
-	enc, pos, ch := extractPassthroughs(withoutTag, alphabet)
+	enc, pos, ch := extractPassthroughs(withoutHeader, alphabet)
 	var decrypted string
 	var err error
-	if pol.Engine == "ff3" {
+	if cfg.Engine == "ff3" {
 		cipher, e := ff3.New(key, make([]byte, 8), alphabet)
 		if e != nil {
 			return "", e
@@ -306,12 +306,12 @@ func (c *Cyphera) accessFPE(protectedValue string, pol Policy, explicitPolicy bo
 	return reinsertPassthroughs(decrypted, pos, ch), nil
 }
 
-func (c *Cyphera) protectMask(value string, pol Policy) (string, error) {
-	if pol.Pattern == "" {
+func (c *Cyphera) protectMask(value string, cfg Configuration) (string, error) {
+	if cfg.Pattern == "" {
 		return "", fmt.Errorf("mask requires 'pattern'")
 	}
 	n := len(value)
-	switch pol.Pattern {
+	switch cfg.Pattern {
 	case "last4", "last_4":
 		return strings.Repeat("*", max(0, n-4)) + value[max(0, n-4):], nil
 	case "last2", "last_2":
@@ -325,16 +325,16 @@ func (c *Cyphera) protectMask(value string, pol Policy) (string, error) {
 	}
 }
 
-func (c *Cyphera) protectHash(value string, pol Policy) (string, error) {
-	algo := strings.ToLower(strings.ReplaceAll(pol.Algorithm, "-", ""))
+func (c *Cyphera) protectHash(value string, cfg Configuration) (string, error) {
+	algo := strings.ToLower(strings.ReplaceAll(cfg.Algorithm, "-", ""))
 	if algo == "" {
 		algo = "sha256"
 	}
 	data := []byte(value)
-	if pol.KeyRef != "" {
-		key := c.keys[pol.KeyRef]
+	if cfg.KeyRef != "" {
+		key := c.keys[cfg.KeyRef]
 		if key == nil {
-			return "", fmt.Errorf("unknown key: %s", pol.KeyRef)
+			return "", fmt.Errorf("unknown key: %s", cfg.KeyRef)
 		}
 		var h func() hash.Hash
 		switch algo {
