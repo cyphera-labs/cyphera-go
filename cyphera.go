@@ -233,25 +233,28 @@ func (c *Cyphera) Protect(value, configurationName string) (string, error) {
 //
 // With a configuration name, the input is treated as raw headerless
 // ciphertext for the named configuration. This form is only valid when the
-// configuration has header_enabled=false; for headered configurations the
-// header identifies the configuration, so use the single-argument form
-// instead. Calling the two-argument form on a header_enabled=true
+// configuration has header_enabled=false; for headered configurations use
+// AccessByHeader(value) instead. Calling this on a header_enabled=true
 // configuration returns ErrExplicitAccessOnHeaderedConfiguration.
-func (c *Cyphera) Access(protectedValue string, configurationName ...string) (string, error) {
-	if len(configurationName) > 0 && configurationName[0] != "" {
-		name := configurationName[0]
-		cfg, ok := c.configurations[name]
-		if !ok {
-			return "", fmt.Errorf("unknown configuration: %s", name)
-		}
-		if cfg.isHeaderEnabled() {
-			return "", fmt.Errorf(
-				"configuration '%s' has header_enabled=true; use Access(value) — the header identifies the configuration. The two-arg form is for header_enabled=false configurations only: %w",
-				name, ErrExplicitAccessOnHeaderedConfiguration,
-			)
-		}
-		return c.accessFPE(protectedValue, cfg)
+func (c *Cyphera) Access(protectedValue string, configurationName string) (string, error) {
+	cfg, ok := c.configurations[configurationName]
+	if !ok {
+		return "", fmt.Errorf("unknown configuration: %s", configurationName)
 	}
+	if cfg.isHeaderEnabled() {
+		return "", fmt.Errorf(
+			"configuration '%s' has header_enabled=true; use AccessByHeader(value) — the header identifies the configuration. The two-arg form is for header_enabled=false configurations only: %w",
+			configurationName, ErrExplicitAccessOnHeaderedConfiguration,
+		)
+	}
+	return c.accessFPE(protectedValue, cfg)
+}
+
+// AccessByHeader reverses a protected value using the embedded Data
+// Protection Header (DPH). The SDK looks up the matching configuration
+// by header prefix and decrypts. Use this for header_enabled=true
+// configurations; for header_enabled=false use Access(value, name).
+func (c *Cyphera) AccessByHeader(protectedValue string) (string, error) {
 	headers := make([]string, 0, len(c.headerIndex))
 	for h := range c.headerIndex {
 		headers = append(headers, h)

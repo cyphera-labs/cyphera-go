@@ -37,7 +37,7 @@ func TestProtectAccessWithHeader(t *testing.T) {
 	if protected[:3] != "T01" {
 		t.Errorf("expected header T01, got %s", protected[:3])
 	}
-	accessed, err := c.Access(protected)
+	accessed, err := c.AccessByHeader(protected)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestProtectAccessWithPassthroughs(t *testing.T) {
 	if !contains(protected, '-') {
 		t.Error("dashes should be preserved")
 	}
-	accessed, _ := c.Access(protected)
+	accessed, _ := c.AccessByHeader(protected)
 	if accessed != "123-45-6789" {
 		t.Errorf("roundtrip failed: got %s", accessed)
 	}
@@ -130,7 +130,7 @@ func TestKeySourceEnv(t *testing.T) {
 	if p[:3] != "T01" {
 		t.Error("should have header")
 	}
-	a, _ := c.Access(p)
+	a, _ := c.AccessByHeader(p)
 	if a != "123456789" {
 		t.Errorf("roundtrip failed: got %s", a)
 	}
@@ -153,7 +153,7 @@ func TestKeySourceFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, _ := c.Protect("123456789", "ssn")
-	a, _ := c.Access(p)
+	a, _ := c.AccessByHeader(p)
 	if a != "123456789" {
 		t.Errorf("roundtrip failed: got %s", a)
 	}
