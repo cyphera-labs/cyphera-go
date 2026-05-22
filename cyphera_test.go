@@ -37,7 +37,7 @@ func TestProtectAccessWithHeader(t *testing.T) {
 	if protected[:3] != "T01" {
 		t.Errorf("expected header T01, got %s", protected[:3])
 	}
-	accessed, err := c.AccessByHeader(protected)
+	accessed, err := c.Access(protected)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestProtectAccessWithPassthroughs(t *testing.T) {
 	if !contains(protected, '-') {
 		t.Error("dashes should be preserved")
 	}
-	accessed, _ := c.AccessByHeader(protected)
+	accessed, _ := c.Access(protected)
 	if accessed != "123-45-6789" {
 		t.Errorf("roundtrip failed: got %s", accessed)
 	}
@@ -64,7 +64,7 @@ func TestUnheaderedDigitsRoundtrip(t *testing.T) {
 	if len(protected) != 9 {
 		t.Errorf("unheadered should be same length, got %d", len(protected))
 	}
-	accessed, _ := c.Access(protected, "ssn_digits")
+	accessed, _ := c.Decrypt("ssn_digits", protected)
 	if accessed != "123456789" {
 		t.Errorf("roundtrip failed: got %s", accessed)
 	}
@@ -130,7 +130,7 @@ func TestKeySourceEnv(t *testing.T) {
 	if p[:3] != "T01" {
 		t.Error("should have header")
 	}
-	a, _ := c.AccessByHeader(p)
+	a, _ := c.Access(p)
 	if a != "123456789" {
 		t.Errorf("roundtrip failed: got %s", a)
 	}
@@ -153,7 +153,7 @@ func TestKeySourceFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, _ := c.Protect("123456789", "ssn")
-	a, _ := c.AccessByHeader(p)
+	a, _ := c.Access(p)
 	if a != "123456789" {
 		t.Errorf("roundtrip failed: got %s", a)
 	}
@@ -177,7 +177,7 @@ func TestKeySourceEnvMatchesInline(t *testing.T) {
 	}
 }
 
-func TestAccessOnHeaderedConfigurationErrors(t *testing.T) {
+func TestDecryptOnHeaderedConfigurationErrors(t *testing.T) {
 	c, err := FromConfig(testConfig)
 	if err != nil {
 		t.Fatal(err)
@@ -186,31 +186,32 @@ func TestAccessOnHeaderedConfigurationErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// ssn has header_enabled=true (default). Two-arg Access must error
-	// cleanly instead of silently decrypting garbage.
-	_, err = c.Access(protected, "ssn")
+	// ssn has header_enabled=true (default). Decrypt is the lower-level
+	// headerless path — it must error cleanly instead of silently
+	// decrypting garbage. Headered configurations go through Access(value).
+	_, err = c.Decrypt("ssn", protected)
 	if err == nil {
-		t.Fatal("expected error on two-arg Access with headered configuration, got nil")
+		t.Fatal("expected error on Decrypt with headered configuration, got nil")
 	}
-	if !errors.Is(err, ErrExplicitAccessOnHeaderedConfiguration) {
-		t.Errorf("expected ErrExplicitAccessOnHeaderedConfiguration sentinel, got: %v", err)
+	if !errors.Is(err, ErrDecryptOnHeaderedConfiguration) {
+		t.Errorf("expected ErrDecryptOnHeaderedConfiguration sentinel, got: %v", err)
 	}
 	if !strings.Contains(err.Error(), "ssn") {
 		t.Errorf("error message should include configuration name 'ssn', got: %v", err)
 	}
 }
 
-func TestAccessTwoArgOnUnheaderedConfigurationWorks(t *testing.T) {
+func TestDecryptOnUnheaderedConfigurationWorks(t *testing.T) {
 	c, err := FromConfig(testConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// ssn_digits has header_enabled=false → two-arg Access is the right call.
+	// ssn_digits has header_enabled=false → Decrypt is the right call.
 	protected, err := c.Protect("123456789", "ssn_digits")
 	if err != nil {
 		t.Fatal(err)
 	}
-	accessed, err := c.Access(protected, "ssn_digits")
+	accessed, err := c.Decrypt("ssn_digits", protected)
 	if err != nil {
 		t.Fatal(err)
 	}

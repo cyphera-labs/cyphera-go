@@ -21,16 +21,16 @@ import (
 	"github.com/cyphera-labs/cyphera-go/engine/ff3"
 )
 
-// ErrExplicitAccessOnHeaderedConfiguration is returned by Access when the
-// caller supplies a configuration name whose header_enabled is true. The
-// two-argument form treats the input as raw headerless ciphertext, so it
-// is only valid for header_enabled=false configurations. For headered
-// configurations the header itself identifies the configuration — use the
-// single-argument Access(value) instead.
+// ErrDecryptOnHeaderedConfiguration is returned by Decrypt when the caller
+// supplies a configuration name whose header_enabled is true. Decrypt is
+// the lower-level drop-down that treats its input as raw headerless
+// ciphertext, so it is only valid for header_enabled=false configurations.
+// For headered configurations the header itself identifies the
+// configuration — use Access(value) instead.
 //
 // Wrap with errors.Is to detect; the formatted error also includes the
 // configuration name for debuggability.
-var ErrExplicitAccessOnHeaderedConfiguration = errors.New("two-arg access on header_enabled=true configuration")
+var ErrDecryptOnHeaderedConfiguration = errors.New("decrypt on header_enabled=true configuration")
 
 var cloudSources = map[string]bool{
 	"aws-kms": true, "gcp-kms": true, "azure-kv": true, "vault": true,
@@ -235,36 +235,13 @@ func (c *Cyphera) Protect(value, configurationName string) (string, error) {
 	}
 }
 
-// Access decrypts a protected value.
+// Access reverses a protected value. The SDK uses the loaded configurations
+// to figure out which one applies — it checks the leading bytes of the
+// value against the registered headers (longest first to avoid prefix
+// collisions), strips the matched header, and decrypts.
 //
-// Without a configuration name, the protected value's leading header (DPH)
-// is matched against the known configurations and the corresponding
-// configuration is used to decrypt the remainder.
-//
-// With a configuration name, the input is treated as raw headerless
-// ciphertext for the named configuration. This form is only valid when the
-// configuration has header_enabled=false; for headered configurations use
-// AccessByHeader(value) instead. Calling this on a header_enabled=true
-// configuration returns ErrExplicitAccessOnHeaderedConfiguration.
-func (c *Cyphera) Access(protectedValue string, configurationName string) (string, error) {
-	cfg, ok := c.configurations[configurationName]
-	if !ok {
-		return "", fmt.Errorf("unknown configuration: %s", configurationName)
-	}
-	if cfg.isHeaderEnabled() {
-		return "", fmt.Errorf(
-			"configuration '%s' has header_enabled=true; use AccessByHeader(value) — the header identifies the configuration. The two-arg form is for header_enabled=false configurations only: %w",
-			configurationName, ErrExplicitAccessOnHeaderedConfiguration,
-		)
-	}
-	return c.accessFPE(protectedValue, cfg)
-}
-
-// AccessByHeader reverses a protected value using the embedded Data
-// Protection Header (DPH). The SDK looks up the matching configuration
-// by header prefix and decrypts. Use this for header_enabled=true
-// configurations; for header_enabled=false use Access(value, name).
-func (c *Cyphera) AccessByHeader(protectedValue string) (string, error) {
+// For configurations without a header, drop down to Decrypt(name, ct).
+func (c *Cyphera) Access(protectedValue string) (string, error) {
 	headers := make([]string, 0, len(c.headerIndex))
 	for h := range c.headerIndex {
 		headers = append(headers, h)
@@ -278,6 +255,27 @@ func (c *Cyphera) AccessByHeader(protectedValue string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("no matching header found")
+}
+
+// Decrypt is the lower-level drop-down for reversing a headerless
+// ciphertext using a named configuration. The configuration must have
+// header_enabled=false — for headered configurations, use Access(value),
+// which strips the header itself.
+//
+// Returns ErrDecryptOnHeaderedConfiguration when called on a
+// header_enabled=true configuration.
+func (c *Cyphera) Decrypt(configurationName, ciphertext string) (string, error) {
+	cfg, ok := c.configurations[configurationName]
+	if !ok {
+		return "", fmt.Errorf("unknown configuration: %s", configurationName)
+	}
+	if cfg.isHeaderEnabled() {
+		return "", fmt.Errorf(
+			"configuration '%s' has header_enabled=true; use Access(value) — the header identifies the configuration. Decrypt is for header_enabled=false configurations only: %w",
+			configurationName, ErrDecryptOnHeaderedConfiguration,
+		)
+	}
+	return c.accessFPE(ciphertext, cfg)
 }
 
 func (c *Cyphera) protectFPE(value string, cfg Configuration) (string, error) {
@@ -324,10 +322,9 @@ func (c *Cyphera) protectFPE(value string, cfg Configuration) (string, error) {
 }
 
 // accessFPE decrypts a headerless ciphertext using the given configuration.
-// Callers are responsible for stripping any DPH before calling — the
-// header-based path in Access does the strip, and the explicit two-arg
-// path in Access is only reachable for header_enabled=false configurations
-// (which have no header to strip).
+// Callers are responsible for stripping any DPH before calling — Access
+// does the strip itself, and Decrypt is only reachable for
+// header_enabled=false configurations (which have no header to strip).
 func (c *Cyphera) accessFPE(protectedValue string, cfg Configuration) (string, error) {
 	if cfg.Engine != "ff1" && cfg.Engine != "ff3" && cfg.Engine != "ff31" {
 		return "", fmt.Errorf("cannot reverse '%s'", cfg.Engine)
