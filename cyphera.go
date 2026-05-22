@@ -9,7 +9,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"hash"
 	"os"
@@ -20,17 +19,6 @@ import (
 	"github.com/cyphera-labs/cyphera-go/engine/ff1"
 	"github.com/cyphera-labs/cyphera-go/engine/ff3"
 )
-
-// ErrDecryptOnHeaderedConfiguration is returned by Decrypt when the caller
-// supplies a configuration name whose header_enabled is true. Decrypt is
-// the lower-level drop-down that treats its input as raw headerless
-// ciphertext, so it is only valid for header_enabled=false configurations.
-// For headered configurations the header itself identifies the
-// configuration — use Access(value) instead.
-//
-// Wrap with errors.Is to detect; the formatted error also includes the
-// configuration name for debuggability.
-var ErrDecryptOnHeaderedConfiguration = errors.New("decrypt on header_enabled=true configuration")
 
 var cloudSources = map[string]bool{
 	"aws-kms": true, "gcp-kms": true, "azure-kv": true, "vault": true,
@@ -240,7 +228,8 @@ func (c *Cyphera) Protect(value, configurationName string) (string, error) {
 // value against the registered headers (longest first to avoid prefix
 // collisions), strips the matched header, and decrypts.
 //
-// For configurations without a header, drop down to Decrypt(name, ct).
+// For unique situations where the protected value has no header, use the
+// AccessWithConfig(name, value) escape hatch.
 func (c *Cyphera) Access(protectedValue string) (string, error) {
 	headers := make([]string, 0, len(c.headerIndex))
 	for h := range c.headerIndex {
@@ -257,25 +246,23 @@ func (c *Cyphera) Access(protectedValue string) (string, error) {
 	return "", fmt.Errorf("no matching header found")
 }
 
-// Decrypt is the lower-level drop-down for reversing a headerless
-// ciphertext using a named configuration. The configuration must have
-// header_enabled=false — for headered configurations, use Access(value),
-// which strips the header itself.
+// AccessWithConfig is the escape-hatch reverse path for unique situations
+// where the protected value has no header (mainframe formats, fixed-width
+// legacy systems, etc.). The caller names the configuration explicitly and
+// the value is decrypted as raw headerless ciphertext.
 //
-// Returns ErrDecryptOnHeaderedConfiguration when called on a
-// header_enabled=true configuration.
-func (c *Cyphera) Decrypt(configurationName, ciphertext string) (string, error) {
+// Prefer Access(value) for normal use — that's the primary API. This form
+// is intentionally not promoted in examples.
+//
+// Errors if the configuration is unknown or its engine is irreversible
+// (mask/hash). There is no header_enabled guard — the caller is asserting
+// that value has no header.
+func (c *Cyphera) AccessWithConfig(configurationName, value string) (string, error) {
 	cfg, ok := c.configurations[configurationName]
 	if !ok {
 		return "", fmt.Errorf("unknown configuration: %s", configurationName)
 	}
-	if cfg.isHeaderEnabled() {
-		return "", fmt.Errorf(
-			"configuration '%s' has header_enabled=true; use Access(value) — the header identifies the configuration. Decrypt is for header_enabled=false configurations only: %w",
-			configurationName, ErrDecryptOnHeaderedConfiguration,
-		)
-	}
-	return c.accessFPE(ciphertext, cfg)
+	return c.accessFPE(value, cfg)
 }
 
 func (c *Cyphera) protectFPE(value string, cfg Configuration) (string, error) {
@@ -323,8 +310,8 @@ func (c *Cyphera) protectFPE(value string, cfg Configuration) (string, error) {
 
 // accessFPE decrypts a headerless ciphertext using the given configuration.
 // Callers are responsible for stripping any DPH before calling — Access
-// does the strip itself, and Decrypt is only reachable for
-// header_enabled=false configurations (which have no header to strip).
+// does the strip itself, and AccessWithConfig is the escape hatch where
+// the caller asserts the input has no header.
 func (c *Cyphera) accessFPE(protectedValue string, cfg Configuration) (string, error) {
 	if cfg.Engine != "ff1" && cfg.Engine != "ff3" && cfg.Engine != "ff31" {
 		return "", fmt.Errorf("cannot reverse '%s'", cfg.Engine)

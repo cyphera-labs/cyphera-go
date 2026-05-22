@@ -21,13 +21,14 @@ to protected output identifying the configuration used.
 
 API change.
 
-- `Access` is now a single one-argument method: `Access(value)`. The SDK
-  uses the loaded configurations and their headers to figure out which
-  one applies (longest-prefix match), strips the header, and decrypts.
-- The two-arg `Access(value, configurationName)` overload and the
-  `AccessByHeader(value)` alias are gone.
-- The lower-level drop-down for headerless ciphertext is now
-  `Decrypt(configurationName, ciphertext)`. It returns
-  `ErrDecryptOnHeaderedConfiguration` when called on a
-  `header_enabled = true` configuration — that path is reserved for
-  `Access(value)`.
+- `Access(value)` is the primary one-argument method. The SDK uses the
+  loaded configurations and their headers to figure out which one applies
+  (longest-prefix match), strips the header, and decrypts.
+- `AccessWithConfig(configurationName, value)` is the escape hatch for
+  unique situations where the protected value has no header (mainframe
+  formats, fixed-width legacy systems, etc.). The caller names the
+  configuration explicitly; the value is decrypted as raw headerless
+  ciphertext. Errors only if the configuration is unknown or its engine
+  is irreversible (mask/hash) — there is no header_enabled guard.
+- The `AccessByHeader(value)` alias is gone — `Access(value)` is the
+  header-driven form.

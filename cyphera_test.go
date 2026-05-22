@@ -1,10 +1,8 @@
 package cyphera
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -64,7 +62,7 @@ func TestUnheaderedDigitsRoundtrip(t *testing.T) {
 	if len(protected) != 9 {
 		t.Errorf("unheadered should be same length, got %d", len(protected))
 	}
-	accessed, _ := c.Decrypt("ssn_digits", protected)
+	accessed, _ := c.AccessWithConfig("ssn_digits", protected)
 	if accessed != "123456789" {
 		t.Errorf("roundtrip failed: got %s", accessed)
 	}
@@ -177,46 +175,46 @@ func TestKeySourceEnvMatchesInline(t *testing.T) {
 	}
 }
 
-func TestDecryptOnHeaderedConfigurationErrors(t *testing.T) {
+func TestAccessWithConfigUnheadered(t *testing.T) {
 	c, err := FromConfig(testConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
-	protected, err := c.Protect("123-45-6789", "ssn")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// ssn has header_enabled=true (default). Decrypt is the lower-level
-	// headerless path — it must error cleanly instead of silently
-	// decrypting garbage. Headered configurations go through Access(value).
-	_, err = c.Decrypt("ssn", protected)
-	if err == nil {
-		t.Fatal("expected error on Decrypt with headered configuration, got nil")
-	}
-	if !errors.Is(err, ErrDecryptOnHeaderedConfiguration) {
-		t.Errorf("expected ErrDecryptOnHeaderedConfiguration sentinel, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "ssn") {
-		t.Errorf("error message should include configuration name 'ssn', got: %v", err)
-	}
-}
-
-func TestDecryptOnUnheaderedConfigurationWorks(t *testing.T) {
-	c, err := FromConfig(testConfig)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// ssn_digits has header_enabled=false → Decrypt is the right call.
+	// ssn_digits has header_enabled=false → the escape-hatch form is the
+	// right call.
 	protected, err := c.Protect("123456789", "ssn_digits")
 	if err != nil {
 		t.Fatal(err)
 	}
-	accessed, err := c.Decrypt("ssn_digits", protected)
+	accessed, err := c.AccessWithConfig("ssn_digits", protected)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if accessed != "123456789" {
 		t.Errorf("roundtrip failed: got %s", accessed)
+	}
+}
+
+func TestAccessWithConfigUnknownConfigurationErrors(t *testing.T) {
+	c, err := FromConfig(testConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.AccessWithConfig("nope", "abc")
+	if err == nil {
+		t.Fatal("expected error on unknown configuration name")
+	}
+}
+
+func TestAccessWithConfigIrreversibleEngineErrors(t *testing.T) {
+	c, err := FromConfig(testConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// mask is irreversible — escape hatch should reject it.
+	_, err = c.AccessWithConfig("ssn_mask", "anything")
+	if err == nil {
+		t.Fatal("expected error on irreversible engine")
 	}
 }
 
