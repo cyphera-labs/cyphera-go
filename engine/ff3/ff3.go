@@ -1,4 +1,4 @@
-// Package ff3 implements NIST SP 800-38G Rev 1 FF3-1 Format Preserving Encryption.
+// String-alphabet API over the FF3 core. See ff3_core.go for the package doc.
 package ff3
 
 import (
@@ -40,6 +40,31 @@ func New(key, tweak []byte, alphabet string) (*Cipher, error) {
 		alphabet: alphabet,
 		charMap: charMap,
 	}, nil
+}
+
+// NewFF31 creates a new FF3-1 cipher (NIST SP 800-38G Rev 1).
+// Parameters:
+//   - key: AES key (16, 24, or 32 bytes)
+//   - tweak: must be exactly 7 bytes (56 bits)
+//   - alphabet: the character set
+//
+// FF3-1 is FF3 with a 56-bit tweak. The tweak is expanded into the 64-bit
+// form the FF3 core consumes; everything downstream is identical FF3.
+func NewFF31(key, tweak []byte, alphabet string) (*Cipher, error) {
+	if len(tweak) != 7 {
+		return nil, fmt.Errorf("tweak must be exactly 7 bytes (56 bits) for FF3-1, got %d", len(tweak))
+	}
+	return New(key, expandFF31Tweak(tweak), alphabet)
+}
+
+// expandFF31Tweak expands the 56-bit FF3-1 tweak into the 64-bit tweak the
+// FF3 round function consumes (NIST SP 800-38G Rev 1), with bytes[0:4] = T_L
+// and bytes[4:8] = T_R.
+func expandFF31Tweak(t []byte) []byte {
+	return []byte{
+		t[0], t[1], t[2], t[3] & 0xF0,
+		t[4], t[5], t[6], (t[3] & 0x0F) << 4,
+	}
 }
 
 // Encrypt encrypts the plaintext using FF3.

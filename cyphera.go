@@ -15,6 +15,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/cyphera-labs/cyphera-go/engine/ff1"
 	"github.com/cyphera-labs/cyphera-go/engine/ff3"
@@ -205,6 +206,17 @@ func FromConfig(config Config) (*Cyphera, error) {
 	return c, nil
 }
 
+var ff3DeprecationOnce sync.Once
+
+// warnFF3Deprecated emits the FF3 deprecation warning to stderr, once per
+// process. Original FF3 is cryptographically weak; configurations should use
+// the 'ff31' engine.
+func warnFF3Deprecated() {
+	ff3DeprecationOnce.Do(func() {
+		fmt.Fprintln(os.Stderr, "WARNING: engine 'ff3' is deprecated and cryptographically weak — migrate to 'ff31' (FF3-1).")
+	})
+}
+
 // Protect encrypts a value using the named configuration.
 func (c *Cyphera) Protect(value, configurationName string) (string, error) {
 	cfg, ok := c.configurations[configurationName]
@@ -212,10 +224,8 @@ func (c *Cyphera) Protect(value, configurationName string) (string, error) {
 		return "", fmt.Errorf("unknown configuration: %s", configurationName)
 	}
 	switch cfg.Engine {
-	case "ff1":
-		return c.protectFPE(value, cfg, false)
-	case "ff3":
-		return c.protectFPE(value, cfg, true)
+	case "ff1", "ff3", "ff31":
+		return c.protectFPE(value, cfg)
 	case "mask":
 		return c.protectMask(value, cfg)
 	case "hash":
@@ -270,7 +280,7 @@ func (c *Cyphera) AccessByHeader(protectedValue string) (string, error) {
 	return "", fmt.Errorf("no matching header found")
 }
 
-func (c *Cyphera) protectFPE(value string, cfg Configuration, isFF3 bool) (string, error) {
+func (c *Cyphera) protectFPE(value string, cfg Configuration) (string, error) {
 	key := c.keys[cfg.KeyRef]
 	if key == nil {
 		return "", fmt.Errorf("unknown key: %s", cfg.KeyRef)
@@ -282,13 +292,21 @@ func (c *Cyphera) protectFPE(value string, cfg Configuration, isFF3 bool) (strin
 	}
 	var encrypted string
 	var err error
-	if isFF3 {
+	switch cfg.Engine {
+	case "ff3":
+		warnFF3Deprecated()
 		cipher, e := ff3.New(key, make([]byte, 8), alphabet)
 		if e != nil {
 			return "", e
 		}
 		encrypted, err = cipher.Encrypt(enc)
-	} else {
+	case "ff31":
+		cipher, e := ff3.NewFF31(key, make([]byte, 7), alphabet)
+		if e != nil {
+			return "", e
+		}
+		encrypted, err = cipher.Encrypt(enc)
+	default:
 		cipher, e := ff1.New(key, nil, alphabet)
 		if e != nil {
 			return "", e
@@ -311,7 +329,7 @@ func (c *Cyphera) protectFPE(value string, cfg Configuration, isFF3 bool) (strin
 // path in Access is only reachable for header_enabled=false configurations
 // (which have no header to strip).
 func (c *Cyphera) accessFPE(protectedValue string, cfg Configuration) (string, error) {
-	if cfg.Engine != "ff1" && cfg.Engine != "ff3" {
+	if cfg.Engine != "ff1" && cfg.Engine != "ff3" && cfg.Engine != "ff31" {
 		return "", fmt.Errorf("cannot reverse '%s'", cfg.Engine)
 	}
 	key := c.keys[cfg.KeyRef]
@@ -322,13 +340,21 @@ func (c *Cyphera) accessFPE(protectedValue string, cfg Configuration) (string, e
 	enc, pos, ch := extractPassthroughs(protectedValue, alphabet)
 	var decrypted string
 	var err error
-	if cfg.Engine == "ff3" {
+	switch cfg.Engine {
+	case "ff3":
+		warnFF3Deprecated()
 		cipher, e := ff3.New(key, make([]byte, 8), alphabet)
 		if e != nil {
 			return "", e
 		}
 		decrypted, err = cipher.Decrypt(enc)
-	} else {
+	case "ff31":
+		cipher, e := ff3.NewFF31(key, make([]byte, 7), alphabet)
+		if e != nil {
+			return "", e
+		}
+		decrypted, err = cipher.Decrypt(enc)
+	default:
 		cipher, e := ff1.New(key, nil, alphabet)
 		if e != nil {
 			return "", e

@@ -1,20 +1,20 @@
-// Package ff3 implements the FF3-1 format-preserving encryption algorithm
-// as specified in NIST SP 800-38G Revision 1.
+// Package ff3 implements FF3 and FF3-1 format-preserving encryption.
 //
-// This implementation follows the same 3-file architecture used in fpe-arena:
-// ff3_core.go — pure cryptographic implementation
-// ff3_api.go  — string interface with alphabet support
-// ff3_alphabets.go — predefined character sets
+// FF3 (NIST SP 800-38G) is the original algorithm — cryptographically weak
+// and deprecated. FF3-1 (NIST SP 800-38G Revision 1) is the recommended
+// algorithm; it differs only in using a 56-bit tweak. Use NewFF31 for FF3-1.
 package ff3
 
 import (
 	"crypto/aes"
 	"crypto/cipher"
 	"fmt"
+	"math"
 	"math/big"
 )
 
-// FF3Cipher represents the core FF3-1 cipher implementation.
+// FF3Cipher represents the core FF3 cipher implementation. FF3-1 reuses this
+// core via NewFF31, which pre-expands the 56-bit tweak.
 type FF3Cipher struct {
 	radix  int
 	aes    cipher.Block
@@ -23,14 +23,14 @@ type FF3Cipher struct {
 	maxLen int
 }
 
-// NewFF3Cipher creates a new FF3-1 cipher with the specified radix, key, and tweak.
+// NewFF3Cipher creates a new FF3 cipher with the specified radix, key, and tweak.
 //
 // radix must be between 2 and 62.
 // key must be 16, 24, or 32 bytes (AES-128, AES-192, or AES-256).
 // tweak must be exactly 8 bytes (64 bits) per the FF3 specification.
 func NewFF3Cipher(radix int, key, tweak []byte) (*FF3Cipher, error) {
-	if radix < 2 || radix > 62 {
-		return nil, fmt.Errorf("radix must be between 2 and 62, got %d", radix)
+	if radix < 2 || radix > 65536 {
+		return nil, fmt.Errorf("radix must be between 2 and 65536, got %d", radix)
 	}
 	if len(key) != 16 && len(key) != 24 && len(key) != 32 {
 		return nil, fmt.Errorf("key length must be 16, 24, or 32 bytes, got %d", len(key))
@@ -47,10 +47,9 @@ func NewFF3Cipher(radix int, key, tweak []byte) (*FF3Cipher, error) {
 	tweakCopy := make([]byte, len(tweak))
 	copy(tweakCopy, tweak)
 
-	maxLen := 32
-	if radix > 36 {
-		maxLen = 56
-	}
+	// NIST SP 800-38G: maxlen = 2 * floor(96 / log2(radix)).
+	// (radix 10 -> 56, radix 26 -> 40, radix 62/64 -> 32)
+	maxLen := 2 * int(math.Floor(96.0/math.Log2(float64(radix))))
 
 	return &FF3Cipher{
 		radix:  radix,
@@ -61,7 +60,7 @@ func NewFF3Cipher(radix int, key, tweak []byte) (*FF3Cipher, error) {
 	}, nil
 }
 
-// ff3Encrypt performs the core FF3-1 encryption algorithm.
+// ff3Encrypt performs the core FF3 encryption algorithm.
 func (c *FF3Cipher) ff3Encrypt(plaintext []int, tweak []byte) []int {
 	n := len(plaintext)
 	u := (n + 1) / 2
@@ -102,7 +101,7 @@ func (c *FF3Cipher) ff3Encrypt(plaintext []int, tweak []byte) []int {
 	return result
 }
 
-// ff3Decrypt performs the core FF3-1 decryption algorithm.
+// ff3Decrypt performs the core FF3 decryption algorithm.
 func (c *FF3Cipher) ff3Decrypt(ciphertext []int, tweak []byte) []int {
 	n := len(ciphertext)
 	u := (n + 1) / 2
