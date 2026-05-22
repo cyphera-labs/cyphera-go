@@ -73,6 +73,9 @@ func (c *Cipher) Encrypt(plaintext string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := c.core.checkLength(len(nums)); err != nil {
+		return "", err
+	}
 	result := c.core.ff3Encrypt(nums, c.core.tweak)
 	return c.fromDigits(result), nil
 }
@@ -81,6 +84,9 @@ func (c *Cipher) Encrypt(plaintext string) (string, error) {
 func (c *Cipher) Decrypt(ciphertext string) (string, error) {
 	nums, err := c.toDigits(ciphertext)
 	if err != nil {
+		return "", err
+	}
+	if err := c.core.checkLength(len(nums)); err != nil {
 		return "", err
 	}
 	result := c.core.ff3Decrypt(nums, c.core.tweak)

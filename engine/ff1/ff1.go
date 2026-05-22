@@ -107,10 +107,23 @@ func (c *Cipher) fromDigits(nums []int) string {
 }
 
 // ff1Encrypt performs FF1 encryption per NIST SP 800-38G Algorithm 1.
+// checkLength enforces the NIST SP 800-38G minimum domain — length >= 2 and
+// radix^length >= 1,000,000 — with exact big.Int arithmetic.
+func (c *Cipher) checkLength(n int) error {
+	if n < 2 {
+		return errors.New("input too short (min 2 characters)")
+	}
+	pow := new(big.Int).Exp(big.NewInt(int64(c.radix)), big.NewInt(int64(n)), nil)
+	if pow.Cmp(big.NewInt(1000000)) < 0 {
+		return errors.New("input too short (NIST minimum: radix^length must be >= 1,000,000)")
+	}
+	return nil
+}
+
 func (c *Cipher) ff1Encrypt(plaintext []int, tweak []byte) ([]int, error) {
 	n := len(plaintext)
-	if n < 2 {
-		return nil, errors.New("plaintext too short (min 2 characters)")
+	if err := c.checkLength(n); err != nil {
+		return nil, err
 	}
 	radix := c.radix
 
@@ -158,8 +171,8 @@ func (c *Cipher) ff1Encrypt(plaintext []int, tweak []byte) ([]int, error) {
 // ff1Decrypt performs FF1 decryption per NIST SP 800-38G Algorithm 2.
 func (c *Cipher) ff1Decrypt(ciphertext []int, tweak []byte) ([]int, error) {
 	n := len(ciphertext)
-	if n < 2 {
-		return nil, errors.New("ciphertext too short (min 2 characters)")
+	if err := c.checkLength(n); err != nil {
+		return nil, err
 	}
 	radix := c.radix
 

@@ -61,6 +61,22 @@ func NewFF3Cipher(radix int, key, tweak []byte) (*FF3Cipher, error) {
 }
 
 // ff3Encrypt performs the core FF3 encryption algorithm.
+// checkLength enforces NIST SP 800-38G: length >= 2, radix^length >= 1,000,000,
+// and length <= the per-radix FF3 maximum. Exact big.Int arithmetic.
+func (c *FF3Cipher) checkLength(n int) error {
+	if n < c.minLen {
+		return fmt.Errorf("input too short (min %d characters)", c.minLen)
+	}
+	pow := new(big.Int).Exp(big.NewInt(int64(c.radix)), big.NewInt(int64(n)), nil)
+	if pow.Cmp(big.NewInt(1000000)) < 0 {
+		return fmt.Errorf("input too short (NIST minimum: radix^length must be >= 1,000,000)")
+	}
+	if n > c.maxLen {
+		return fmt.Errorf("input too long (FF3 maximum for this radix is %d)", c.maxLen)
+	}
+	return nil
+}
+
 func (c *FF3Cipher) ff3Encrypt(plaintext []int, tweak []byte) []int {
 	n := len(plaintext)
 	u := (n + 1) / 2
