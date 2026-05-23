@@ -218,6 +218,104 @@ func TestAccessWithConfigIrreversibleEngineErrors(t *testing.T) {
 	}
 }
 
+// FF3 / FF3-1 tweak is required at the configuration layer. Missing → hard
+// error with the canonical spec message. No silent zero-fill (matches NIST +
+// Bouncy Castle + cyphera-rust).
+func TestProtectFF3MissingTweakErrors(t *testing.T) {
+	cfg := Config{
+		Configurations: map[string]Configuration{
+			"ff3_d": {Engine: "ff3", Alphabet: "digits", KeyRef: "test-key", HeaderEnabled: boolPtr(false)},
+		},
+		Keys: map[string]map[string]string{
+			"test-key": {"material": "2B7E151628AED2A6ABF7158809CF4F3C"},
+		},
+	}
+	c, err := FromConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.Protect("0123456789", "ff3_d")
+	if err == nil {
+		t.Fatal("expected error on missing FF3 tweak")
+	}
+	want := "configuration 'ff3_d' is missing required 'tweak' (FF3 needs 8 bytes)"
+	if err.Error() != want {
+		t.Errorf("error message mismatch\n got: %q\nwant: %q", err.Error(), want)
+	}
+}
+
+func TestProtectFF31MissingTweakErrors(t *testing.T) {
+	cfg := Config{
+		Configurations: map[string]Configuration{
+			"ff31_d": {Engine: "ff31", Alphabet: "digits", KeyRef: "test-key", HeaderEnabled: boolPtr(false)},
+		},
+		Keys: map[string]map[string]string{
+			"test-key": {"material": "2B7E151628AED2A6ABF7158809CF4F3C"},
+		},
+	}
+	c, err := FromConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.Protect("0123456789", "ff31_d")
+	if err == nil {
+		t.Fatal("expected error on missing FF3-1 tweak")
+	}
+	want := "configuration 'ff31_d' is missing required 'tweak' (FF3-1 needs 7 bytes)"
+	if err.Error() != want {
+		t.Errorf("error message mismatch\n got: %q\nwant: %q", err.Error(), want)
+	}
+}
+
+// FF1 tweak stays optional per NIST SP 800-38G — missing is fine.
+func TestProtectFF1MissingTweakOK(t *testing.T) {
+	cfg := Config{
+		Configurations: map[string]Configuration{
+			"ff1_d": {Engine: "ff1", Alphabet: "digits", KeyRef: "test-key", HeaderEnabled: boolPtr(false)},
+		},
+		Keys: map[string]map[string]string{
+			"test-key": {"material": "2B7E151628AED2A6ABF7158809CF4F3C"},
+		},
+	}
+	c, err := FromConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Protect("0123456789", "ff1_d"); err != nil {
+		t.Fatalf("FF1 with no tweak should succeed: %v", err)
+	}
+}
+
+// With a real 8-byte FF3 tweak, protect+access roundtrip must work.
+func TestProtectFF3WithTweakRoundtrips(t *testing.T) {
+	cfg := Config{
+		Configurations: map[string]Configuration{
+			"ff3_d": {Engine: "ff3", Alphabet: "digits", KeyRef: "test-key", Tweak: "D8E7920AFA330A73", HeaderEnabled: boolPtr(false)},
+		},
+		Keys: map[string]map[string]string{
+			"test-key": {"material": "2B7E151628AED2A6ABF7158809CF4F3C"},
+		},
+	}
+	c, err := FromConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	protected, err := c.Protect("0123456789", "ff3_d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if protected == "0123456789" {
+		t.Error("ciphertext equals plaintext")
+	}
+	accessed, err := c.AccessWithConfig("ff3_d", protected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if accessed != "0123456789" {
+		t.Errorf("roundtrip failed: got %s", accessed)
+	}
+}
+
 func contains(s string, c byte) bool {
 	for i := 0; i < len(s); i++ {
 		if s[i] == c {

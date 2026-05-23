@@ -100,6 +100,7 @@ type Configuration struct {
 	Engine        string `json:"engine"`
 	Alphabet      string `json:"alphabet,omitempty"`
 	KeyRef        string `json:"key_ref,omitempty"`
+	Tweak         string `json:"tweak,omitempty"`
 	Header        string `json:"header,omitempty"`
 	HeaderEnabled *bool  `json:"header_enabled,omitempty"`
 	HeaderLength  int    `json:"header_length,omitempty"`
@@ -213,7 +214,7 @@ func (c *Cyphera) Protect(value, configurationName string) (string, error) {
 	}
 	switch cfg.Engine {
 	case "ff1", "ff3", "ff31":
-		return c.protectFPE(value, cfg)
+		return c.protectFPE(value, configurationName, cfg)
 	case "mask":
 		return c.protectMask(value, cfg)
 	case "hash":
@@ -238,9 +239,10 @@ func (c *Cyphera) Access(protectedValue string) (string, error) {
 	sort.Slice(headers, func(i, j int) bool { return len(headers[i]) > len(headers[j]) })
 	for _, header := range headers {
 		if strings.HasPrefix(protectedValue, header) {
-			cfg := c.configurations[c.headerIndex[header]]
+			name := c.headerIndex[header]
+			cfg := c.configurations[name]
 			// Strip the header here — accessFPE always assumes headerless input.
-			return c.accessFPE(protectedValue[len(header):], cfg)
+			return c.accessFPE(protectedValue[len(header):], name, cfg)
 		}
 	}
 	return "", fmt.Errorf("no matching header found")
@@ -268,10 +270,47 @@ func (c *Cyphera) AccessWithConfig(configurationName, value string) (string, err
 	case "hash":
 		return "", fmt.Errorf("cannot reverse '%s' — hash is irreversible", configurationName)
 	}
-	return c.accessFPE(value, cfg)
+	return c.accessFPE(value, configurationName, cfg)
 }
 
-func (c *Cyphera) protectFPE(value string, cfg Configuration) (string, error) {
+// resolveTweak validates and decodes the configuration-level tweak for an FPE
+// engine. FF3 requires exactly 8 bytes and FF3-1 requires exactly 7; either
+// missing → hard error with the canonical spec message. FF1 accepts an empty
+// or arbitrary-length tweak per NIST SP 800-38G.
+func resolveTweak(name string, cfg Configuration) ([]byte, error) {
+	switch cfg.Engine {
+	case "ff3":
+		if cfg.Tweak == "" {
+			return nil, fmt.Errorf("configuration '%s' is missing required 'tweak' (FF3 needs 8 bytes)", name)
+		}
+		t, err := hex.DecodeString(cfg.Tweak)
+		if err != nil {
+			return nil, fmt.Errorf("configuration '%s' has invalid 'tweak' hex: %w", name, err)
+		}
+		return t, nil
+	case "ff31":
+		if cfg.Tweak == "" {
+			return nil, fmt.Errorf("configuration '%s' is missing required 'tweak' (FF3-1 needs 7 bytes)", name)
+		}
+		t, err := hex.DecodeString(cfg.Tweak)
+		if err != nil {
+			return nil, fmt.Errorf("configuration '%s' has invalid 'tweak' hex: %w", name, err)
+		}
+		return t, nil
+	default:
+		// FF1 — empty tweak is fine, but allow a configured one if supplied.
+		if cfg.Tweak == "" {
+			return nil, nil
+		}
+		t, err := hex.DecodeString(cfg.Tweak)
+		if err != nil {
+			return nil, fmt.Errorf("configuration '%s' has invalid 'tweak' hex: %w", name, err)
+		}
+		return t, nil
+	}
+}
+
+func (c *Cyphera) protectFPE(value, name string, cfg Configuration) (string, error) {
 	key := c.keys[cfg.KeyRef]
 	if key == nil {
 		return "", fmt.Errorf("key error: key '%s' not found", cfg.KeyRef)
@@ -281,24 +320,27 @@ func (c *Cyphera) protectFPE(value string, cfg Configuration) (string, error) {
 	if enc == "" {
 		return "", fmt.Errorf("no encryptable characters in input")
 	}
+	tweak, err := resolveTweak(name, cfg)
+	if err != nil {
+		return "", err
+	}
 	var encrypted string
-	var err error
 	switch cfg.Engine {
 	case "ff3":
 		warnFF3Deprecated()
-		cipher, e := ff3.New(key, make([]byte, 8), alphabet)
+		cipher, e := ff3.New(key, tweak, alphabet)
 		if e != nil {
 			return "", e
 		}
 		encrypted, err = cipher.Encrypt(enc)
 	case "ff31":
-		cipher, e := ff3.NewFF31(key, make([]byte, 7), alphabet)
+		cipher, e := ff3.NewFF31(key, tweak, alphabet)
 		if e != nil {
 			return "", e
 		}
 		encrypted, err = cipher.Encrypt(enc)
 	default:
-		cipher, e := ff1.New(key, nil, alphabet)
+		cipher, e := ff1.New(key, tweak, alphabet)
 		if e != nil {
 			return "", e
 		}
@@ -318,7 +360,7 @@ func (c *Cyphera) protectFPE(value string, cfg Configuration) (string, error) {
 // Callers are responsible for stripping any DPH before calling — Access
 // does the strip itself, and AccessWithConfig is the escape hatch where
 // the caller asserts the input has no header.
-func (c *Cyphera) accessFPE(protectedValue string, cfg Configuration) (string, error) {
+func (c *Cyphera) accessFPE(protectedValue, name string, cfg Configuration) (string, error) {
 	if cfg.Engine != "ff1" && cfg.Engine != "ff3" && cfg.Engine != "ff31" {
 		return "", fmt.Errorf("unknown engine: %s", cfg.Engine)
 	}
@@ -328,24 +370,27 @@ func (c *Cyphera) accessFPE(protectedValue string, cfg Configuration) (string, e
 	}
 	alphabet := resolveAlphabet(cfg.Alphabet)
 	enc, pos, ch := extractPassthroughs(protectedValue, alphabet)
+	tweak, err := resolveTweak(name, cfg)
+	if err != nil {
+		return "", err
+	}
 	var decrypted string
-	var err error
 	switch cfg.Engine {
 	case "ff3":
 		warnFF3Deprecated()
-		cipher, e := ff3.New(key, make([]byte, 8), alphabet)
+		cipher, e := ff3.New(key, tweak, alphabet)
 		if e != nil {
 			return "", e
 		}
 		decrypted, err = cipher.Decrypt(enc)
 	case "ff31":
-		cipher, e := ff3.NewFF31(key, make([]byte, 7), alphabet)
+		cipher, e := ff3.NewFF31(key, tweak, alphabet)
 		if e != nil {
 			return "", e
 		}
 		decrypted, err = cipher.Decrypt(enc)
 	default:
-		cipher, e := ff1.New(key, nil, alphabet)
+		cipher, e := ff1.New(key, tweak, alphabet)
 		if e != nil {
 			return "", e
 		}
