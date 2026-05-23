@@ -421,13 +421,18 @@ func extractPassthroughs(value, alphabet string) (string, []int, []rune) {
 	var enc strings.Builder
 	var positions []int
 	var chars []rune
-	for i, r := range value {
+	// Track RUNE index, not byte index. `for i, r := range string` yields byte
+	// offsets, which would land multibyte passthroughs at the wrong slot when
+	// reinsertPassthroughs operates on []rune. Use a separate counter.
+	runeIdx := 0
+	for _, r := range value {
 		if strings.ContainsRune(alphabet, r) {
 			enc.WriteRune(r)
 		} else {
-			positions = append(positions, i)
+			positions = append(positions, runeIdx)
 			chars = append(chars, r)
 		}
+		runeIdx++
 	}
 	return enc.String(), positions, chars
 }
