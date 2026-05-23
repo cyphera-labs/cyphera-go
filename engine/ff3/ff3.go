@@ -52,7 +52,7 @@ func New(key, tweak []byte, alphabet string) (*Cipher, error) {
 // form the FF3 core consumes; everything downstream is identical FF3.
 func NewFF31(key, tweak []byte, alphabet string) (*Cipher, error) {
 	if len(tweak) != 7 {
-		return nil, fmt.Errorf("tweak must be exactly 7 bytes (56 bits) for FF3-1, got %d", len(tweak))
+		return nil, fmt.Errorf("invalid tweak length: %d (expected 7)", len(tweak))
 	}
 	return New(key, expandFF31Tweak(tweak), alphabet)
 }
@@ -95,12 +95,14 @@ func (c *Cipher) Decrypt(ciphertext string) (string, error) {
 
 func (c *Cipher) toDigits(s string) ([]int, error) {
 	digits := make([]int, 0, len(s))
+	pos := 0
 	for _, r := range s {
 		idx, ok := c.charMap[r]
 		if !ok {
-			return nil, fmt.Errorf("invalid character '%c' not in alphabet", r)
+			return nil, fmt.Errorf("invalid char '%c' at position %d", r, pos)
 		}
 		digits = append(digits, idx)
+		pos++
 	}
 	return digits, nil
 }

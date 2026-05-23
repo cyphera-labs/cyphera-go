@@ -183,10 +183,10 @@ func FromConfig(config Config) (*Cyphera, error) {
 	for name, cfg := range config.Configurations {
 		if cfg.isHeaderEnabled() {
 			if cfg.Header == "" {
-				return nil, fmt.Errorf("configuration '%s' has header_enabled=true but no header", name)
+				return nil, fmt.Errorf("configuration error: header must be specified")
 			}
-			if existing, ok := c.headerIndex[cfg.Header]; ok {
-				return nil, fmt.Errorf("header collision: '%s' used by '%s' and '%s'", cfg.Header, existing, name)
+			if _, ok := c.headerIndex[cfg.Header]; ok {
+				return nil, fmt.Errorf("configuration error: header collision")
 			}
 			c.headerIndex[cfg.Header] = name
 		}
@@ -209,7 +209,7 @@ func warnFF3Deprecated() {
 func (c *Cyphera) Protect(value, configurationName string) (string, error) {
 	cfg, ok := c.configurations[configurationName]
 	if !ok {
-		return "", fmt.Errorf("unknown configuration: %s", configurationName)
+		return "", fmt.Errorf("configuration not found: %s", configurationName)
 	}
 	switch cfg.Engine {
 	case "ff1", "ff3", "ff31":
@@ -260,7 +260,13 @@ func (c *Cyphera) Access(protectedValue string) (string, error) {
 func (c *Cyphera) AccessWithConfig(configurationName, value string) (string, error) {
 	cfg, ok := c.configurations[configurationName]
 	if !ok {
-		return "", fmt.Errorf("unknown configuration: %s", configurationName)
+		return "", fmt.Errorf("configuration not found: %s", configurationName)
+	}
+	switch cfg.Engine {
+	case "mask":
+		return "", fmt.Errorf("cannot reverse '%s' — mask is irreversible", configurationName)
+	case "hash":
+		return "", fmt.Errorf("cannot reverse '%s' — hash is irreversible", configurationName)
 	}
 	return c.accessFPE(value, cfg)
 }
@@ -268,12 +274,12 @@ func (c *Cyphera) AccessWithConfig(configurationName, value string) (string, err
 func (c *Cyphera) protectFPE(value string, cfg Configuration) (string, error) {
 	key := c.keys[cfg.KeyRef]
 	if key == nil {
-		return "", fmt.Errorf("unknown key: %s", cfg.KeyRef)
+		return "", fmt.Errorf("key error: key '%s' not found", cfg.KeyRef)
 	}
 	alphabet := resolveAlphabet(cfg.Alphabet)
 	enc, pos, ch := extractPassthroughs(value, alphabet)
 	if enc == "" {
-		return "", fmt.Errorf("no encryptable characters")
+		return "", fmt.Errorf("no encryptable characters in input")
 	}
 	var encrypted string
 	var err error
@@ -314,11 +320,11 @@ func (c *Cyphera) protectFPE(value string, cfg Configuration) (string, error) {
 // the caller asserts the input has no header.
 func (c *Cyphera) accessFPE(protectedValue string, cfg Configuration) (string, error) {
 	if cfg.Engine != "ff1" && cfg.Engine != "ff3" && cfg.Engine != "ff31" {
-		return "", fmt.Errorf("cannot reverse '%s'", cfg.Engine)
+		return "", fmt.Errorf("unknown engine: %s", cfg.Engine)
 	}
 	key := c.keys[cfg.KeyRef]
 	if key == nil {
-		return "", fmt.Errorf("unknown key: %s", cfg.KeyRef)
+		return "", fmt.Errorf("key error: key '%s' not found", cfg.KeyRef)
 	}
 	alphabet := resolveAlphabet(cfg.Alphabet)
 	enc, pos, ch := extractPassthroughs(protectedValue, alphabet)
@@ -353,7 +359,7 @@ func (c *Cyphera) accessFPE(protectedValue string, cfg Configuration) (string, e
 
 func (c *Cyphera) protectMask(value string, cfg Configuration) (string, error) {
 	if cfg.Pattern == "" {
-		return "", fmt.Errorf("mask requires 'pattern'")
+		return "", fmt.Errorf("mask pattern required")
 	}
 	n := len(value)
 	switch cfg.Pattern {
@@ -379,7 +385,7 @@ func (c *Cyphera) protectHash(value string, cfg Configuration) (string, error) {
 	if cfg.KeyRef != "" {
 		key := c.keys[cfg.KeyRef]
 		if key == nil {
-			return "", fmt.Errorf("unknown key: %s", cfg.KeyRef)
+			return "", fmt.Errorf("key error: key '%s' not found", cfg.KeyRef)
 		}
 		var h func() hash.Hash
 		switch algo {

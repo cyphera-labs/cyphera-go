@@ -29,7 +29,7 @@ func New(key, tweak []byte, alphabet string) (*Cipher, error) {
 		return nil, errors.New("alphabet must have >= 2 characters")
 	}
 	if len(key) != 16 && len(key) != 24 && len(key) != 32 {
-		return nil, errors.New("key must be 16, 24, or 32 bytes")
+		return nil, fmt.Errorf("invalid key length: %d (expected 16, 24, or 32)", len(key))
 	}
 
 	// NIST SP 800-38G requires AES-ECB as the PRF for FF1/FF3 Feistel rounds.
@@ -87,12 +87,14 @@ func (c *Cipher) Decrypt(ciphertext string) (string, error) {
 
 func (c *Cipher) toDigits(s string) ([]int, error) {
 	digits := make([]int, 0, len(s))
+	pos := 0
 	for _, r := range s {
 		idx, ok := c.charMap[r]
 		if !ok {
-			return nil, fmt.Errorf("invalid character '%c' not in alphabet", r)
+			return nil, fmt.Errorf("invalid char '%c' at position %d", r, pos)
 		}
 		digits = append(digits, idx)
+		pos++
 	}
 	return digits, nil
 }
@@ -111,11 +113,11 @@ func (c *Cipher) fromDigits(nums []int) string {
 // radix^length >= 1,000,000 — with exact big.Int arithmetic.
 func (c *Cipher) checkLength(n int) error {
 	if n < 2 {
-		return errors.New("input too short (min 2 characters)")
+		return errors.New("input too short (NIST minimum: length >= 2 and radix^length >= 1,000,000)")
 	}
 	pow := new(big.Int).Exp(big.NewInt(int64(c.radix)), big.NewInt(int64(n)), nil)
 	if pow.Cmp(big.NewInt(1000000)) < 0 {
-		return errors.New("input too short (NIST minimum: radix^length must be >= 1,000,000)")
+		return errors.New("input too short (NIST minimum: length >= 2 and radix^length >= 1,000,000)")
 	}
 	return nil
 }

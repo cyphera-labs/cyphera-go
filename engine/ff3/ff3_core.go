@@ -33,10 +33,10 @@ func NewFF3Cipher(radix int, key, tweak []byte) (*FF3Cipher, error) {
 		return nil, fmt.Errorf("radix must be between 2 and 65536, got %d", radix)
 	}
 	if len(key) != 16 && len(key) != 24 && len(key) != 32 {
-		return nil, fmt.Errorf("key length must be 16, 24, or 32 bytes, got %d", len(key))
+		return nil, fmt.Errorf("invalid key length: %d (expected 16, 24, or 32)", len(key))
 	}
 	if len(tweak) != 8 {
-		return nil, fmt.Errorf("tweak must be exactly 8 bytes (64 bits) for FF3, got %d", len(tweak))
+		return nil, fmt.Errorf("invalid tweak length: %d (expected 8)", len(tweak))
 	}
 
 	aesCipher, err := createAESCipher(key)
@@ -65,11 +65,11 @@ func NewFF3Cipher(radix int, key, tweak []byte) (*FF3Cipher, error) {
 // and length <= the per-radix FF3 maximum. Exact big.Int arithmetic.
 func (c *FF3Cipher) checkLength(n int) error {
 	if n < c.minLen {
-		return fmt.Errorf("input too short (min %d characters)", c.minLen)
+		return fmt.Errorf("input too short (NIST minimum: length >= 2 and radix^length >= 1,000,000)")
 	}
 	pow := new(big.Int).Exp(big.NewInt(int64(c.radix)), big.NewInt(int64(n)), nil)
 	if pow.Cmp(big.NewInt(1000000)) < 0 {
-		return fmt.Errorf("input too short (NIST minimum: radix^length must be >= 1,000,000)")
+		return fmt.Errorf("input too short (NIST minimum: length >= 2 and radix^length >= 1,000,000)")
 	}
 	if n > c.maxLen {
 		return fmt.Errorf("input too long (FF3 maximum for this radix is %d)", c.maxLen)
